@@ -160,7 +160,7 @@ Response must be pure JSON only."""
                     "question": question_text,
                     "answer": "Not available yet",
                     "category_id": ObjectId(correct_category_id), # Usar el ID correcto aquí
-                    "category_name": category_name,
+                    "category_name": matching_category.name,
                     "uuid": str(uuid.uuid4())
                 })
             else:
