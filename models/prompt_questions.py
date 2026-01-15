@@ -1,0 +1,41 @@
+from beanie import Document, PydanticObjectId
+from typing import Optional, List
+from bson import ObjectId
+from pydantic import BaseModel, Field
+from datetime import datetime
+
+
+# 🔹 Sub-model for Question + Answer
+class QnAModel(BaseModel):
+    category_id: PydanticObjectId
+    question: str
+    answer: Optional[str] = None
+    capture:Optional[bool] = False
+    category_name: Optional[str] = None
+    uuid: Optional[str] = None
+
+
+class PromptQuestionsModel(Document):
+    company_id: Optional[PydanticObjectId]
+    project_id: Optional[PydanticObjectId]
+    website_url: Optional[str]
+    context: Optional[str] = None
+    chatgpt_website_analysis: Optional[str] = None
+    gemini_website_analysis: Optional[str] = None
+    nation: Optional[str] = None
+    state: Optional[str] = None
+    qna: Optional[List[QnAModel]] = Field(default_factory=list)
+    createdAt: datetime = Field(default_factory=datetime.utcnow)
+    updatedAt: datetime = Field(default_factory=datetime.utcnow)
+    isDeleted: bool = False
+
+    class Settings:
+        name = "prompt_questions"
+
+    class Config:
+        arbitrary_types_allowed = True
+        json_encoders = {
+            ObjectId: str,
+            PydanticObjectId: str,
+            datetime: lambda v: v.isoformat()
+        }

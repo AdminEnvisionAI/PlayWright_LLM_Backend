@@ -4,7 +4,13 @@ import random
 import json
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
-
+from models.prompt_questions import PromptQuestionsModel
+from models.questionsCategory import QuestionsCategoryModel
+from models.website_analysis import WebsiteAnalysisResponse
+from global_db_opretions import find_one,update_one
+from bson import ObjectId
+import uuid
+from typing import Optional
 USER_DATA_DIR = os.path.join(os.getcwd(), "user_data")
 COOKIES_FILE = os.path.join(os.getcwd(), "chatgpt_cookies.json")
 
@@ -219,6 +225,8 @@ async def run_chatgpt_session(question: str, headless: bool, is_retry: bool = Fa
             return response_text.strip()
 
     except Exception as e:
+        import traceback
+        print(traceback.format_exc())
         return f"Error in ask_chatgpt: {str(e)}"
 
     finally:
@@ -235,7 +243,7 @@ import json
 import re
 from models.website_analysis import WebsiteAnalysis
 
-async def analyze_website_chatgpt(domain: str, nation: str, state: str, query_context: str = ""):
+async def analyze_website_chatgpt(domain: str, nation: str, state: str, query_context: str = "", company_id: str = "", project_id: str = ""):
     context_section = ""
     if query_context and query_context.strip():
         context_section = (
@@ -283,18 +291,28 @@ async def analyze_website_chatgpt(domain: str, nation: str, state: str, query_co
                 parsed = json.loads(match.group())
             else:
                 parsed = json.loads(result)
-        
-        return WebsiteAnalysis(**parsed)
-    except Exception:
-        return WebsiteAnalysis(
+        clean_json_str = json.dumps(parsed, ensure_ascii=False)
+        prompt_questions = PromptQuestionsModel(context=query_context,website_url=domain,nation=nation,state=state,company_id=company_id,project_id=project_id,chatgpt_website_analysis=clean_json_str)
+        await prompt_questions.insert()
+        return WebsiteAnalysisResponse(
+    website_analysis=WebsiteAnalysis(**parsed),
+    prompt_questions_id=str(prompt_questions.id)
+)
+
+    except Exception as e:
+        print("Error", e)
+        return WebsiteAnalysisResponse(
+        website_analysis=WebsiteAnalysis(
             brandName=domain.split('.')[0].capitalize(),
-            niche="Unknown",
-            purpose="Unknown",
-            services=["Unknown"]
-        )
+            niche=domain,
+            purpose=e,
+            services=[domain]
+        ),
+        prompt_questions_id=""
+    )
 
 
-async def ask_chatgpt(question: str) -> str:
+async def ask_chatgpt(question: str,prompt_questions_id: str,category_id: str,qna_uuid: Optional[str]=None) -> str:
     async with SESSION_LOCK:
         has_cookies = cookies_exist()
         
@@ -310,5 +328,36 @@ async def ask_chatgpt(question: str) -> str:
         if result == "CAPTCHA_RETRY":
             print("Cloudflare challenge failed. Retrying once in visible mode...")
             result = await run_chatgpt_session(question, headless=True, is_retry=True)
-        
+        if qna_uuid:
+            await update_one(
+    PromptQuestionsModel,
+    {"_id": ObjectId(prompt_questions_id)},
+    {
+        "$set": {
+            "qna.$[item].answer": result,
+            "qna.$[item].question": question
+        }
+    },
+    array_filters=[
+        {"item.uuid": qna_uuid}
+    ]
+)   
+        else:
+            await update_one(
+    PromptQuestionsModel,
+    {"_id": ObjectId(prompt_questions_id)},
+    {
+        "$push": {
+            "qna": {
+                "question": question,
+                "answer": result,
+                "category_id": ObjectId(category_id),
+                "uuid": str(uuid.uuid4())
+            }
+        }
+    }
+)
+
+
+
         return result

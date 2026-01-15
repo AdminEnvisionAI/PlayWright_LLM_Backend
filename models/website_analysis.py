@@ -17,10 +17,17 @@ class WebsiteAnalysis(BaseModel):
     services: List[str]
 
 
+class WebsiteAnalysisResponse(BaseModel):
+    website_analysis: WebsiteAnalysis
+    prompt_questions_id: str    
+
+
+
 class Question(BaseModel):
     id: str
     category: str
     text: str
+    category_name: Optional[str] = None
 
 
 class EvaluationResult(BaseModel):
@@ -37,6 +44,8 @@ class AnalyzeRequest(BaseModel):
     nation: str
     state: str
     queryContext: Optional[str] = ""
+    company_id: Optional[str] = ""
+    project_id: Optional[str] = ""
 
 
 class GenerateQuestionsRequest(BaseModel):
@@ -44,6 +53,7 @@ class GenerateQuestionsRequest(BaseModel):
     domain: str
     nation: str
     state: str
+    prompt_questions_id: str
 
 
 class AskRequest(BaseModel):
@@ -54,7 +64,10 @@ class AskRequest(BaseModel):
 
 class AskResponse(BaseModel):
     answer: str
-
+    prompt_questions_id: Optional[str]=None
 
 class AskChatGPTRequest(BaseModel):
     question: str
+    prompt_questions_id: str
+    category_id: str
+    uuid: Optional[str]=None

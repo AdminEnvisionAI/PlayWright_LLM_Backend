@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from routes.api_routes import router
 from routes.company_routes import router as company_router
 from routes.project_routes import router as project_router
+from routes.category_routes import router as category_router
 from database import init_db
 import uvicorn
 
@@ -32,6 +33,7 @@ app.add_middleware(
 app.include_router(router)
 app.include_router(company_router)
 app.include_router(project_router)
+app.include_router(category_router)
 
 
 @app.get("/")

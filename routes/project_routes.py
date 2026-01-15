@@ -29,7 +29,7 @@ class ProjectUpdateRequest(BaseModel):
     state: Optional[str] = None
 
 
-@router.get("/api/companies/{company_id}/projects")
+@router.post("/api/companies/{company_id}/projects")
 async def list_company_projects(company_id: str):
     try:
         projects = await get_projects_by_company(company_id)
@@ -38,7 +38,7 @@ async def list_company_projects(company_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/projects/{project_id}")
+@router.post("/api/projects/{project_id}")
 async def get_project(project_id: str):
     try:
         project = await get_project_by_id(project_id)
@@ -67,7 +67,7 @@ async def add_project(company_id: str, request: ProjectCreateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/api/projects/{project_id}")
+@router.post("/api/projects/{project_id}")
 async def edit_project(project_id: str, request: ProjectUpdateRequest):
     try:
         project = await update_project(
@@ -87,7 +87,7 @@ async def edit_project(project_id: str, request: ProjectUpdateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/api/projects/{project_id}")
+@router.post("/api/projects/{project_id}")
 async def remove_project(project_id: str):
     try:
         success = await delete_project(project_id)

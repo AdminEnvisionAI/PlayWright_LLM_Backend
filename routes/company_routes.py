@@ -25,7 +25,7 @@ class CompanyUpdateRequest(BaseModel):
     website: Optional[str] = None
 
 
-@router.get("")
+@router.post("")
 async def list_companies():
     try:
         companies = await get_all_companies()
@@ -34,7 +34,7 @@ async def list_companies():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{company_id}")
+@router.post("/{company_id}")
 async def get_company(company_id: str):
     try:
         company = await get_company_by_id(company_id)
@@ -60,7 +60,7 @@ async def add_company(request: CompanyCreateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/{company_id}")
+@router.post("/{company_id}")
 async def edit_company(company_id: str, request: CompanyUpdateRequest):
     try:
         company = await update_company(
@@ -78,7 +78,7 @@ async def edit_company(company_id: str, request: CompanyUpdateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/{company_id}")
+@router.post("/{company_id}")
 async def remove_company(company_id: str):
     try:
         success = await delete_company(company_id)
