@@ -25,7 +25,7 @@ class CompanyUpdateRequest(BaseModel):
     website: Optional[str] = None
 
 
-@router.post("")
+@router.post("/list")
 async def list_companies():
     try:
         companies = await get_all_companies()
@@ -34,7 +34,7 @@ async def list_companies():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{company_id}")
+@router.post("/get-company/{company_id}")
 async def get_company(company_id: str):
     try:
         company = await get_company_by_id(company_id)
@@ -47,7 +47,7 @@ async def get_company(company_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("")
+@router.post("/add-company")
 async def add_company(request: CompanyCreateRequest):
     try:
         company = await create_company(
@@ -55,12 +55,13 @@ async def add_company(request: CompanyCreateRequest):
             description=request.description,
             website=request.website
         )
+        
         return {"message": "Company created successfully", "company": company}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{company_id}")
+@router.post("/edit-company/{company_id}")
 async def edit_company(company_id: str, request: CompanyUpdateRequest):
     try:
         company = await update_company(
@@ -78,7 +79,7 @@ async def edit_company(company_id: str, request: CompanyUpdateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{company_id}")
+@router.post("/delete-company/{company_id}")
 async def remove_company(company_id: str):
     try:
         success = await delete_company(company_id)
@@ -89,3 +90,5 @@ async def remove_company(company_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+

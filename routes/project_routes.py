@@ -51,7 +51,7 @@ async def get_project(project_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/companies/{company_id}/projects")
+@router.post("/api/companies/{company_id}/add-projects")
 async def add_project(company_id: str, request: ProjectCreateRequest):
     try:
         project = await create_project(
@@ -67,7 +67,7 @@ async def add_project(company_id: str, request: ProjectCreateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/projects/{project_id}")
+@router.post("/api/edit-projects/{project_id}")
 async def edit_project(project_id: str, request: ProjectUpdateRequest):
     try:
         project = await update_project(
@@ -87,7 +87,7 @@ async def edit_project(project_id: str, request: ProjectUpdateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/projects/{project_id}")
+@router.post("/api/delete-projects/{project_id}")
 async def remove_project(project_id: str):
     try:
         success = await delete_project(project_id)

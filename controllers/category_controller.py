@@ -205,7 +205,8 @@ async def calculate_geo_metrics_controller(request: Request):
         doc = await find_one(PromptQuestionsModel, {"_id": ObjectId(prompt_question_id)})
         if not doc:
             raise HTTPException(status_code=404, detail="Prompt questions document not found")
-        
+        brand_url = doc.website_url
+        print("brand_url",brand_url)
         # 🔥 Auto-fetch brand_name from website analysis if not provided
         if not brand_name:
             # Try to get brand from chatgpt/gemini website analysis
@@ -227,6 +228,52 @@ async def calculate_geo_metrics_controller(request: Request):
         
         if not brand_name:
             raise HTTPException(status_code=400, detail="brand_name is required (could not auto-detect)")
+        
+        # 🔥 Auto-discover competitors if not provided
+        niche = ""
+        if not competitors:
+            # Try to get niche from website analysis
+            if doc.chatgpt_website_analysis:
+                try:
+                    analysis = json.loads(doc.chatgpt_website_analysis) if isinstance(doc.chatgpt_website_analysis, str) else doc.chatgpt_website_analysis
+                    niche = analysis.get("niche", "")
+                except:
+                    pass
+            if not niche and doc.gemini_website_analysis:
+                try:
+                    analysis = json.loads(doc.gemini_website_analysis) if isinstance(doc.gemini_website_analysis, str) else doc.gemini_website_analysis
+                    niche = analysis.get("niche", "")
+                except:
+                    pass
+            
+            # Use LLM to find competitors based on niche
+            if niche:
+                try:
+                    model = genai.GenerativeModel("gemini-2.5-flash")
+                    comp_prompt = f"""You are a competitive analysis expert.
+                    
+Brand: {brand_name}
+Niche: {niche}
+Location: {doc.nation or 'Global'}, {doc.state or ''}
+
+List the top 5 direct competitors of {brand_name} in the {niche} space.
+Return ONLY a JSON array of competitor names, no explanations.
+Example: ["Competitor1", "Competitor2", "Competitor3"]"""
+                    
+                    response = await model.generate_content_async(
+                        comp_prompt,
+                        generation_config=genai.GenerationConfig(
+                            temperature=0.3,
+                            response_mime_type="application/json"
+                        )
+                    )
+                    competitors = extract_json_from_text(response.text)
+                    if not isinstance(competitors, list):
+                        competitors = []
+                    print(f"🔍 Auto-discovered competitors: {competitors}")
+                except Exception as e:
+                    print(f"❌ Competitor discovery failed: {e}")
+                    competitors = []
         
         qna_list = doc.qna or []
         total_prompts = len(qna_list)
