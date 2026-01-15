@@ -28,6 +28,8 @@ class Question(BaseModel):
     category: str
     text: str
     category_name: Optional[str] = None
+    category_id: Optional[str] = None
+    uuid: Optional[str] = None
 
 
 class EvaluationResult(BaseModel):

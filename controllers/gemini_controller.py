@@ -146,13 +146,15 @@ Response must be pure JSON only."""
             if matching_category and question_text:
                 # Si encontramos una categoría que coincide, usamos su ID
                 correct_category_id = str(matching_category.id)
-                
+                uuid_id = str(uuid.uuid4())
                 # Creamos el objeto Question con el ID correcto
                 questions.append(Question(
                     id=correct_category_id,
                     category=category_name,
                     text=question_text,
-                    category_name=category_name
+                    category_name=category_name,
+                    category_id=correct_category_id,
+                    uuid=uuid_id
                 ))
                 
                 # Creamos la entrada qna con el ID correcto
@@ -161,7 +163,7 @@ Response must be pure JSON only."""
                     "answer": "Not available yet",
                     "category_id": ObjectId(correct_category_id), # Usar el ID correcto aquí
                     "category_name": matching_category.name,
-                    "uuid": str(uuid.uuid4())
+                    "uuid": uuid_id
                 })
             else:
                 print(f"Warning: AI returned an unknown category ('{category_name}') or empty text. Skipping.")
