@@ -3,7 +3,8 @@ from controllers.category_controller import (
     get_all_category_controller,
     get_prompt_questions_data_controller,
     calculate_geo_metrics_controller,
-    tag_qna_with_llm_controller
+    tag_qna_with_llm_controller,
+    get_genrated_metrics_controller
 )
 from fastapi import Request
 router = APIRouter(prefix="/api/category",tags=["Category"])
@@ -44,6 +45,15 @@ async def tag_qna_with_llm(request: Request):
 async def calculate_geo_metrics(request: Request):
     try:
         result = await calculate_geo_metrics_controller(request)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/get-genrated-metrics")
+async def get_genrated_metrics(request: Request):
+    try:
+        result = await get_genrated_metrics_controller(request)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

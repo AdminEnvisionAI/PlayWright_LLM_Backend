@@ -8,10 +8,12 @@ from datetime import datetime
 # 🔹 Sub-model for LLM Semantic Tags (ONE-TIME tagging)
 class LLMFlags(BaseModel):
     brand_mentioned: bool = False
+    brand_in_question: bool = False  # 🆕 True if brand appears in the question itself
     brand_rank: Optional[int] = None  # 1, 2, 3... or None
     is_recommended: bool = False
-    sentiment: Optional[str] = None  # positive/neutral/negative
+    sentiment: Optional[str] = None  # positive/neutral_positive/neutral/negative
     citation_type: Optional[str] = None  # first_party/third_party/none
+    citation_expected: bool = False  # 🆕 True if citation is expected for this type of question
     features_mentioned: List[str] = []
     competitors_mentioned: List[str] = []
 

@@ -75,51 +75,113 @@ async def generate_questions(analysis: WebsiteAnalysis, domain: str, nation: str
     model = genai.GenerativeModel("gemini-2.5-flash")
     
     # 🔥 Step 1: Generate dynamic categories and questions based on business type
-    prompt = f"""You are an AEO (Answer Engine Optimization) and GEO (Generative Engine Optimization) expert.
+#     prompt = f"""You are an AEO (Answer Engine Optimization) and GEO (Generative Engine Optimization) expert.
 
-Analyze this business and generate test prompts to evaluate its AI visibility:
+# Analyze this business and generate test prompts to evaluate its AI visibility:
 
-Website: {domain}
-Brand Name: {analysis.brandName}
-Niche: {analysis.niche}
-Purpose: {analysis.purpose}
-Services: {", ".join(analysis.services)}
-Location: {state}, {nation}
+# Website: {domain}
+# Brand Name: {analysis.brandName}
+# Niche: {analysis.niche}
+# Purpose: {analysis.purpose}
+# Services: {", ".join(analysis.services)}
+# Location: {state}, {nation}
 
-Generate a comprehensive set of AEO/GEO test questions organized by categories.
-Each category should be a SINGLE WORD that describes the intent type.
+# Generate a comprehensive set of AEO/GEO test questions organized by categories.
 
-Guidelines:
-1. Create 6-8 relevant categories based on this specific business type
-2. Each category should have 4-6 questions
-3. Questions should be the type users would ask AI assistants (ChatGPT, Gemini, Perplexity)
-4. Mix brand-specific questions with generic discovery questions
-5. Include location-based queries with "{state}" or "{nation}"
-6. Focus on questions that could lead to recommendations
+# ⚠️ CRITICAL RULES FOR CATEGORIES:
 
-Example categories for a restaurant/resort:
-- Discovery: "What is [brand] known for?"
-- LocalIntent: "Best restaurant near me for fine dining"
-- Dining: "What cuisine does [brand] serve?"
-- Stay: "Does [brand] offer accommodation?"
-- Occasions: "Best place for anniversary celebration"
-- Planning: "How to book a table at [brand]?"
-- Comparison: "Best luxury dining in [city]"
-- Trust: "Is [brand] worth visiting?"
+# 1. **Discovery** (REQUIRED - 5-6 questions):
+#    - Questions must be GENERIC - NO brand name at all
+#    - These test if AI recommends the brand without being asked
+#    - Examples: "Best fine dining restaurants in {state}", "Romantic restaurants in {state} for couples"
+#    - NEVER include "{analysis.brandName}" in Discovery questions
 
-Return ONLY a valid JSON object with this exact structure:
+# 2. **Brand** (REQUIRED - 5-6 questions):
+#    - Questions MUST contain the brand name "{analysis.brandName}"
+#    - These test AI's knowledge about the brand specifically
+#    - Examples: "What is {analysis.brandName} known for?", "Is {analysis.brandName} good for romantic dinner?"
+#    - ALWAYS include "{analysis.brandName}" in Brand questions
+
+# 3. **Other Categories** (3-5 business-specific categories):
+#    - Create categories based on this specific business type ({analysis.niche})
+#    - Mix of branded and non-branded questions
+#    - Examples for restaurant: Dining, Occasions, Booking, Reviews
+#    - Examples for hotel: Stay, Amenities, Location, Pricing
+#    - Each category should have 3-5 questions
+
+# Return ONLY a valid JSON object with this exact structure:
+# {{
+#   "Discovery": ["generic question 1 (NO brand name)", "generic question 2", ...],
+#   "Brand": ["question with {analysis.brandName}", "another with {analysis.brandName}", ...],
+#   "CategoryName3": ["question1", "question2", ...],
+#   ...
+# }}
+
+# IMPORTANT:
+# - Discovery category: NEVER use brand name - pure generic queries
+# - Brand category: ALWAYS use brand name "{analysis.brandName}"
+# - Category names must be single words (PascalCase)
+# - Include location "{state}, {nation}" in relevant questions
+# - Response must be pure JSON only, no markdown or explanations"""
+
+
+    prompt = f"""
+You are a world-class AEO (Answer Engine Optimization) and GEO (Generative Engine Optimization) strategist. 
+Your task is to generate a diverse and highly relevant set of test prompts to evaluate an AI's understanding and ranking of a specific business within its local context.
+
+**Business Analysis:**
+- Website: {domain}
+- Brand Name: {analysis.brandName}
+- Niche: {analysis.niche}
+- Purpose: {analysis.purpose}
+- Services: {", ".join(analysis.services)}
+- Primary Location: {state}, {nation}
+
+**Your Mission:**
+Generate a JSON object containing categories of questions. Follow these rules and examples meticulously.
+
+**CRITICAL RULES FOR CATEGORIES:**
+
+1.  **"Discovery" Category (REQUIRED - 5 to 6 questions):**
+    *   **Rule:** ABSOLUTELY NO use of the brand name "{analysis.brandName}". Questions must be generic.
+    *   **Focus:** Create realistic, intent-driven queries specific to the location and niche.
+    *   **Examples (emulate this style):**
+        - "what are the best fine dining restaurants in {state}"
+        - "what are the best romantic restaurants in {state} for couples"
+        - "what are the best luxury dining experiences in {state}"
+        - "what are the best restaurants for date night in {state}"
+        - "what are the best restaurants in {state} for special occasions"
+
+2.  **"Brand" Category (REQUIRED - 5 to 6 questions):**
+    *   **Rule:** MUST ALWAYS include the brand name "{analysis.brandName}".
+    *   **Focus:** Ask practical, specific questions a potential customer would have.
+    *   **Examples (emulate this style):**
+        - "What is {analysis.brandName} known for?"
+        - "Is {analysis.brandName} good for a romantic dinner?"
+        - "Who should visit {analysis.brandName}?"
+        - "What cuisine does {analysis.brandName} serve?"
+        - "Is {analysis.brandName} a luxury restaurant?"
+
+3.  **Other Business-Specific Categories (Generate 3 to 4 additional categories):**
+    *   **Rule:** Create relevant category names (PascalCase, single word) based on the business niche. Suggestions: `Comparison`, `Experience`, `Local/GEO`, `Booking`, `Events`.
+    *   **Content:** Questions can be a mix of branded ("{analysis.brandName}") and non-branded queries.
+    *   **Focus on GEO-SPECIFICITY and USER INTENT, inspired by these examples:**
+        - **For a `Comparison` category:** "{analysis.brandName} vs a well-known competitor in {state} - which is better for couples?", "Best alternative to {analysis.brandName} in {state}?", "Which is more luxurious: {analysis.brandName} or another popular spot?"
+        - **For a `Local/GEO` category:** "Best restaurants near a specific neighborhood in {state}?", "Fine dining restaurants near my location in {state}", "Restaurants open late night in {state}", "Romantic restaurants near the beach in {state}"
+        - **For an `Experience` category:** "Restaurants in {state} with a romantic ambience", "Instagrammable luxury restaurants in {state}", "Restaurants in {state} for a calm elegant evening"
+
+**Final Output Requirement:**
+Return ONLY a valid JSON object with the specified structure. No introductory text, no markdown.
+
 {{
-  "CategoryName1": ["question1", "question2", "question3", ...],
-  "CategoryName2": ["question1", "question2", "question3", ...],
-  ...
+  "Discovery": ["question 1", "question 2", ...],
+  "Brand": ["question 1", "question 2", ...],
+  "Comparison": ["question 1", "question 2", ...],
+  "Experience": ["question 1", "question 2", ...],
+  "Local/GEO": ["question 1", "question 2", ...],
+  "Other Category": ["question 1", "question 2", ...]
 }}
-
-IMPORTANT:
-- Category names must be single words (PascalCase)
-- Each category must have 4-6 questions
-- Replace [brand] with "{analysis.brandName}" in questions
-- Include location "{state}, {nation}" in relevant questions
-- Response must be pure JSON only, no markdown or explanations"""
+"""
 
     try:
         response = await model.generate_content_async(
