@@ -69,3 +69,8 @@ backend/
 ├── database.py       # Database configuration
 └── requirements.txt  # Python dependencies
 ```
+
+pip uninstall playwright
+python -m pip install --upgrade pip
+pip install playwright
+playwright install

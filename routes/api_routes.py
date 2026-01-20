@@ -9,8 +9,13 @@ from models.website_analysis import (
     Question,
     AskChatGPTRequest
 )
-from controllers.gemini_controller import generate_questions, ask_gemini
-from controllers.chatgpt_controller import ask_chatgpt, analyze_website_chatgpt
+# All endpoints now use ChatGPT controller instead of Gemini
+from controllers.chatgpt_controller import (
+    ask_chatgpt, 
+    analyze_website_chatgpt, 
+    generate_questions_chatgpt,
+    ask_chatgpt_with_location
+)
 from typing import List
 
 
@@ -37,7 +42,8 @@ async def analyze_endpoint(request: AnalyzeRequest):
 @router.post("/generate-questions", response_model=List[Question])
 async def generate_questions_endpoint(request: GenerateQuestionsRequest):
     try:
-        result = await generate_questions(
+        # Now using ChatGPT for question generation
+        result = await generate_questions_chatgpt(
             request.analysis, 
             request.domain, 
             request.nation, 
@@ -52,7 +58,8 @@ async def generate_questions_endpoint(request: GenerateQuestionsRequest):
 @router.post("/ask", response_model=AskResponse)
 async def ask_endpoint(request: AskRequest):
     try:
-        answer = await ask_gemini(request.question, request.nation, request.state)
+        # Now using ChatGPT instead of Gemini
+        answer = await ask_chatgpt_with_location(request.question, request.nation, request.state)
         return AskResponse(answer=answer)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
