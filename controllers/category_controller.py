@@ -414,6 +414,8 @@ async def calculate_geo_metrics_controller(request: Request):
         agnostic_top_3 = 0
         agnostic_recommended = 0
         agnostic_positive_sentiment = 0
+        agnostic_neutral_sentiment = 0
+        agnostic_negative_sentiment = 0
         agnostic_citations = 0
         agnostic_citations_expected = 0
         agnostic_zero_mention_prompts = []
@@ -424,6 +426,8 @@ async def calculate_geo_metrics_controller(request: Request):
         included_top_3 = 0
         included_recommended = 0
         included_positive_sentiment = 0
+        included_neutral_sentiment = 0
+        included_negative_sentiment = 0
         included_citations = 0
         included_citations_expected = 0
         included_zero_mention_prompts = []
@@ -431,6 +435,7 @@ async def calculate_geo_metrics_controller(request: Request):
         # Common trackers
         competitor_mentions = {comp: 0 for comp in competitors}
         brand_features = set()
+        other_brands_recommended = {}  # 🆕 Track all brands recommended in answers (excluding user's brand)
         using_llm_flags = False
         
         for qna in qna_list:
@@ -468,9 +473,13 @@ async def calculate_geo_metrics_controller(request: Request):
                         if llm_flags.is_recommended:
                             included_recommended += 1
                         
-                        # 🆕 Include neutral_positive as positive
+                        # 🆕 Track all sentiment types
                         if llm_flags.sentiment in ["positive", "neutral_positive"]:
                             included_positive_sentiment += 1
+                        elif llm_flags.sentiment == "neutral":
+                            included_neutral_sentiment += 1
+                        elif llm_flags.sentiment == "negative":
+                            included_negative_sentiment += 1
                         
                         # Features
                         if llm_flags.features_mentioned:
@@ -502,9 +511,13 @@ async def calculate_geo_metrics_controller(request: Request):
                         if llm_flags.is_recommended:
                             agnostic_recommended += 1
                         
-                        # 🆕 Include neutral_positive as positive
+                        # 🆕 Track all sentiment types
                         if llm_flags.sentiment in ["positive", "neutral_positive"]:
                             agnostic_positive_sentiment += 1
+                        elif llm_flags.sentiment == "neutral":
+                            agnostic_neutral_sentiment += 1
+                        elif llm_flags.sentiment == "negative":
+                            agnostic_negative_sentiment += 1
                         
                         # Features
                         if llm_flags.features_mentioned:
@@ -515,6 +528,13 @@ async def calculate_geo_metrics_controller(request: Request):
                             for comp in llm_flags.competitors_mentioned:
                                 if comp in competitor_mentions:
                                     competitor_mentions[comp] += 1
+                        
+                        # 🆕 Track all other brands recommended in answers
+                        if hasattr(llm_flags, 'other_brands_recommended') and llm_flags.other_brands_recommended:
+                            for other_brand in llm_flags.other_brands_recommended:
+                                if other_brand and other_brand.strip():
+                                    other_brand_clean = other_brand.strip()
+                                    other_brands_recommended[other_brand_clean] = other_brands_recommended.get(other_brand_clean, 0) + 1
                     else:
                         agnostic_zero_mention_prompts.append({
                             "question": question,
@@ -589,6 +609,8 @@ async def calculate_geo_metrics_controller(request: Request):
         agnostic_top_3_rate = round((agnostic_top_3 / agnostic_mentions) * 100, 2) if agnostic_mentions > 0 else 0
         agnostic_recommendation_rate = round((agnostic_recommended / agnostic_mentions) * 100, 2) if agnostic_mentions > 0 else 0
         agnostic_positive_sentiment_rate = round((agnostic_positive_sentiment / agnostic_mentions) * 100, 2) if agnostic_mentions > 0 else 0
+        agnostic_neutral_sentiment_rate = round((agnostic_neutral_sentiment / agnostic_mentions) * 100, 2) if agnostic_mentions > 0 else 0
+        agnostic_negative_sentiment_rate = round((agnostic_negative_sentiment / agnostic_mentions) * 100, 2) if agnostic_mentions > 0 else 0
         agnostic_citation_rate = round((agnostic_citations / agnostic_citations_expected) * 100, 2) if agnostic_citations_expected > 0 else 0
         
         # Brand-Included Metrics (branded query performance)
@@ -596,6 +618,8 @@ async def calculate_geo_metrics_controller(request: Request):
         included_top_3_rate = round((included_top_3 / included_mentions) * 100, 2) if included_mentions > 0 else 0
         included_recommendation_rate = round((included_recommended / included_mentions) * 100, 2) if included_mentions > 0 else 0
         included_positive_sentiment_rate = round((included_positive_sentiment / included_mentions) * 100, 2) if included_mentions > 0 else 0
+        included_neutral_sentiment_rate = round((included_neutral_sentiment / included_mentions) * 100, 2) if included_mentions > 0 else 0
+        included_negative_sentiment_rate = round((included_negative_sentiment / included_mentions) * 100, 2) if included_mentions > 0 else 0
         included_citation_rate = round((included_citations / included_citations_expected) * 100, 2) if included_citations_expected > 0 else 0
         
         # Combined metrics (for legacy support)
@@ -621,6 +645,8 @@ async def calculate_geo_metrics_controller(request: Request):
         "top_3_position_rate": agnostic_top_3_rate,
         "recommendation_rate": agnostic_recommendation_rate,
         "positive_sentiment_rate": agnostic_positive_sentiment_rate,
+        "neutral_sentiment_rate": agnostic_neutral_sentiment_rate,
+        "negative_sentiment_rate": agnostic_negative_sentiment_rate,
         "citations_expected": agnostic_citations_expected,
         "first_party_citations": agnostic_citations,
         "first_party_citation_rate": agnostic_citation_rate,
@@ -634,6 +660,8 @@ async def calculate_geo_metrics_controller(request: Request):
         "top_3_position_rate": included_top_3_rate,
         "recommendation_rate": included_recommendation_rate,
         "positive_sentiment_rate": included_positive_sentiment_rate,
+        "neutral_sentiment_rate": included_neutral_sentiment_rate,
+        "negative_sentiment_rate": included_negative_sentiment_rate,
         "citations_expected": included_citations_expected,
         "first_party_citations": included_citations,
         "first_party_citation_rate": included_citation_rate,
@@ -682,6 +710,8 @@ async def calculate_geo_metrics_controller(request: Request):
                 "top_3_position_rate": agnostic_top_3_rate,
                 "recommendation_rate": agnostic_recommendation_rate,
                 "positive_sentiment_rate": agnostic_positive_sentiment_rate,
+                "neutral_sentiment_rate": agnostic_neutral_sentiment_rate,
+                "negative_sentiment_rate": agnostic_negative_sentiment_rate,
                 "citations_expected": agnostic_citations_expected,
                 "first_party_citations": agnostic_citations,
                 "first_party_citation_rate": agnostic_citation_rate,
@@ -699,6 +729,8 @@ async def calculate_geo_metrics_controller(request: Request):
                 "top_3_position_rate": included_top_3_rate,
                 "recommendation_rate": included_recommendation_rate,
                 "positive_sentiment_rate": included_positive_sentiment_rate,
+                "neutral_sentiment_rate": included_neutral_sentiment_rate,
+                "negative_sentiment_rate": included_negative_sentiment_rate,
                 "citations_expected": included_citations_expected,
                 "first_party_citations": included_citations,
                 "first_party_citation_rate": included_citation_rate,
@@ -718,6 +750,8 @@ async def calculate_geo_metrics_controller(request: Request):
             "competitor_mentions": {comp: count for comp, count in competitor_mentions.items() if count > 0},
             "comparison_presence": comparison_presence,
             "brand_features": list(brand_features),
+            # 🆕 All other brands/competitors recommended in answers (sorted by frequency)
+            "other_brands_recommended": dict(sorted(other_brands_recommended.items(), key=lambda x: x[1], reverse=True)),
             "createdAt": datetime.utcnow().isoformat()  # 🆕 Return timestamp for frontend
         }
         
