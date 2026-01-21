@@ -15,8 +15,6 @@ class BrandAgnosticMetrics(BaseModel):
     top_3_position_rate: float = 0.0
     recommendation_rate: float = 0.0
     positive_sentiment_rate: float = 0.0
-    neutral_sentiment_rate: float = 0.0
-    negative_sentiment_rate: float = 0.0
     citations_expected: int = 0
     first_party_citations: int = 0
     first_party_citation_rate: float = 0.0
@@ -34,8 +32,6 @@ class BrandIncludedMetrics(BaseModel):
     top_3_position_rate: float = 0.0
     recommendation_rate: float = 0.0
     positive_sentiment_rate: float = 0.0
-    neutral_sentiment_rate: float = 0.0
-    negative_sentiment_rate: float = 0.0
     citations_expected: int = 0
     first_party_citations: int = 0
     first_party_citation_rate: float = 0.0
