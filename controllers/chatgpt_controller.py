@@ -383,20 +383,15 @@ async def generate_questions_chatgpt(analysis: WebsiteAnalysis, domain: str, nat
     - Uses ChatGPT via Playwright automation
     """
     
-    prompt = f"""
-You are a world-class AEO (Answer Engine Optimization) and GEO (Generative Engine Optimization) strategist. 
-Your task is to generate a diverse and highly relevant set of test prompts to evaluate an AI's understanding and ranking of a specific business within its local context.
+    prompt = f"""RESPOND WITH ONLY A VALID JSON OBJECT. NO EXPLANATIONS. NO MARKDOWN. NO INTRODUCTORY TEXT. START YOUR RESPONSE WITH {{ AND END WITH }}.
 
-**Business Analysis:**
-- Website: {domain}
-- Brand Name: {analysis.brandName}
+Generate AEO/GEO test questions for this business:
+- Brand: {analysis.brandName}
 - Niche: {analysis.niche}
-- Purpose: {analysis.purpose}
+- Location: {state}, {nation}
 - Services: {", ".join(analysis.services)}
-- Primary Location: {state}, {nation}
 
-**Your Mission:**
-Generate a JSON object containing categories of questions. Follow these rules and examples meticulously.
+Generate a JSON object with these REQUIRED categories:
 
 **CRITICAL RULES FOR CATEGORIES:**
 
@@ -420,24 +415,36 @@ Generate a JSON object containing categories of questions. Follow these rules an
         - "What cuisine does {analysis.brandName} serve?"
         - "Is {analysis.brandName} a luxury restaurant?"
 
-3.  **Other Business-Specific Categories (Generate 3 to 4 additional categories):**
-    *   **Rule:** Create relevant category names (PascalCase, single word) based on the business niche. Suggestions: `Comparison`, `Experience`, `Local/GEO`, `Booking`, `Events`.
-    *   **Content:** Questions can be a mix of branded ("{analysis.brandName}") and non-branded queries.
-    *   **Focus on GEO-SPECIFICITY and USER INTENT, inspired by these examples:**
-        - **For a `Comparison` category:** "{analysis.brandName} vs a well-known competitor in {state} - which is better for couples?", "Best alternative to {analysis.brandName} in {state}?", "Which is more luxurious: {analysis.brandName} or another popular spot?"
-        - **For a `Local/GEO` category:** "Best restaurants near a specific neighborhood in {state}?", "Fine dining restaurants near my location in {state}", "Restaurants open late night in {state}", "Romantic restaurants near the beach in {state}"
-        - **For an `Experience` category:** "Restaurants in {state} with a romantic ambience", "Instagrammable luxury restaurants in {state}", "Restaurants in {state} for a calm elegant evening"
+3.  **"Trust" Category (REQUIRED - 4 to 5 questions):**
+    *   **Rule:** MUST ALWAYS include the brand name "{analysis.brandName}". Focus on trust, credibility, and reliability.
+    *   **Focus:** Ask questions about whether the brand can be trusted for their products/services.
+    *   **Examples (emulate this style):**
+        - "Is {analysis.brandName} good at providing {analysis.niche} services?"
+        - "Can {analysis.brandName} be trusted for quality {analysis.niche}?"
+        - "Is {analysis.brandName} reliable for special occasions?"
+        - "Does {analysis.brandName} have good reviews and reputation?"
+        - "Is {analysis.brandName} worth the price?"
+        - "Can I trust {analysis.brandName} for important events?"
+
+4.  **"Comparison" Category (REQUIRED - 4 to 5 questions):**
+    *   **Rule:** Questions comparing the brand with competitors or alternatives.
+    *   **Focus:** Compare {analysis.brandName} with other options in the market.
+    *   **Examples (emulate this style):**
+        - "{analysis.brandName} vs competitors in {state} - which is better?"
+        - "Best alternative to {analysis.brandName} in {state}?"
+        - "How does {analysis.brandName} compare to other {analysis.niche} providers?"
+        - "Is {analysis.brandName} better than its competitors?"
+        - "Which is more reliable: {analysis.brandName} or other options in {state}?"
 
 **Final Output Requirement:**
 Return ONLY a valid JSON object with the specified structure. No introductory text, no markdown.
+YOU MUST INCLUDE ALL 4 REQUIRED CATEGORIES: Discovery, Brand, Trust, Comparison.
 
 {{
   "Discovery": ["question 1", "question 2", ...],
   "Brand": ["question 1", "question 2", ...],
-  "Comparison": ["question 1", "question 2", ...],
-  "Experience": ["question 1", "question 2", ...],
-  "Local/GEO": ["question 1", "question 2", ...],
-  "Other Category": ["question 1", "question 2", ...]
+  "Trust": ["question 1", "question 2", ...],
+  "Comparison": ["question 1", "question 2", ...]
 }}
 """
 
@@ -692,6 +699,7 @@ For each item, return an object with:
 - citation_expected: boolean
 - features_mentioned: string array
 - competitors_mentioned: string array
+- other_brands_recommended: string array (ALL other brand/company/business names mentioned or recommended in the answer, excluding "{brand_name}")
 
 OUTPUT EXACTLY {len(to_tag)} JSON OBJECTS IN AN ARRAY. START YOUR RESPONSE WITH [ AND END WITH ]. NOTHING ELSE."""
 
@@ -730,7 +738,8 @@ OUTPUT EXACTLY {len(to_tag)} JSON OBJECTS IN AN ARRAY. START YOUR RESPONSE WITH 
                         "citation_type": flags_data.get("citation_type", "none"),
                         "citation_expected": bool(flags_data.get("citation_expected", False)),
                         "features_mentioned": flags_data.get("features_mentioned", []),
-                        "competitors_mentioned": flags_data.get("competitors_mentioned", [])
+                        "competitors_mentioned": flags_data.get("competitors_mentioned", []),
+                        "other_brands_recommended": flags_data.get("other_brands_recommended", [])
                     }
                     qna_dict["llm_flags"] = llm_flags
                     print(f"✅ Tagged Q&A {i+1}/{len(to_tag)}: brand_mentioned={llm_flags['brand_mentioned']}")
