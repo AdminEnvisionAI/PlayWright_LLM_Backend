@@ -55,5 +55,7 @@ async def get_genrated_metrics(request: Request):
     try:
         result = await get_genrated_metrics_controller(request)
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

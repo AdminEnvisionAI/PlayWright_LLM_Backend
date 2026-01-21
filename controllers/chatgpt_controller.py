@@ -43,13 +43,16 @@ async def human_delay(min_ms=500, max_ms=2000):
     await asyncio.sleep(random.randint(min_ms, max_ms) / 1000)
 
 async def human_type(page, selector, text):
+    """
+    🚀 FAST typing - uses keyboard.type with minimal delay (1ms)
+    Much faster than character-by-character but still triggers ChatGPT events
+    """
     element = await page.wait_for_selector(selector, timeout=60000)
     await element.click()
-    await human_delay(200, 500)
-    for char in text:
-        await page.keyboard.type(char, delay=random.randint(30, 100))
-        if random.random() < 0.1:
-            await human_delay(100, 300)
+    await human_delay(100, 200)
+    # Type entire text at once with minimal delay (1ms per char = ~1 second for 1000 chars)
+    await page.keyboard.type(text, delay=1)
+    await human_delay(100, 200)
 
 async def wait_for_cloudflare(page, timeout=30000):
     print("Waiting for Cloudflare challenge to resolve...")
@@ -316,20 +319,59 @@ from models.website_analysis import Question
 
 
 def extract_json(text: str):
-    """Extract JSON from text that may contain markdown code blocks"""
+    """Extract JSON from text that may contain markdown code blocks or extra text"""
+    if not text or not text.strip():
+        print(f"⚠️ extract_json received empty text")
+        raise ValueError("Empty text provided to extract_json")
+    
+    original_text = text
     text = text.strip()
+    
+    # Debug: Show first 200 chars of response
+    print(f"📝 Parsing response ({len(text)} chars): {text[:200]}...")
+    
+    # Strategy 1: Check for markdown code blocks
     json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
     if json_match:
         text = json_match.group(1).strip()
+        print(f"📝 Found markdown code block, extracted: {text[:100]}...")
     
+    # Strategy 2: Direct JSON parse if starts with [ or {
     if text.startswith('[') or text.startswith('{'):
-        return json.loads(text)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            print(f"⚠️ Direct JSON parse failed: {e}")
     
+    # Strategy 3: Find JSON array pattern
+    array_match = re.search(r'\[\s*\{[\s\S]*\}\s*\]', text)
+    if array_match:
+        try:
+            return json.loads(array_match.group())
+        except json.JSONDecodeError as e:
+            print(f"⚠️ Array pattern parse failed: {e}")
+    
+    # Strategy 4: Find any JSON object or array
     json_pattern = r'[\[\{][\s\S]*[\]\}]'
     match = re.search(json_pattern, text)
     if match:
-        return json.loads(match.group())
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError as e:
+            print(f"⚠️ Generic JSON pattern parse failed: {e}")
     
+    # Strategy 5: Try to find individual JSON objects and build array
+    objects = re.findall(r'\{[^{}]*\}', text)
+    if objects:
+        try:
+            parsed_objects = [json.loads(obj) for obj in objects]
+            print(f"📝 Built array from {len(parsed_objects)} individual objects")
+            return parsed_objects
+        except json.JSONDecodeError as e:
+            print(f"⚠️ Individual objects parse failed: {e}")
+    
+    # Last resort: try the whole text
+    print(f"⚠️ All JSON extraction strategies failed, trying raw text...")
     return json.loads(text)
 
 
@@ -543,3 +585,173 @@ async def ask_chatgpt(question: str,prompt_questions_id: str,category_id: str,qn
 
 
         return result
+
+
+async def discover_competitors_chatgpt(brand_name: str, niche: str, nation: str, state: str) -> list:
+    """
+    🔥 Discover competitors for a brand using ChatGPT
+    Same logic as Gemini competitor discovery but using ChatGPT
+    """
+    prompt = f"""RESPOND WITH ONLY JSON. NO EXPLANATIONS. NO MARKDOWN.
+
+List the top 5 direct competitors of "{brand_name}" in the {niche} space in {nation}.
+
+OUTPUT ONLY A JSON ARRAY OF 5 COMPETITOR NAMES. START WITH [ AND END WITH ]. NOTHING ELSE.
+Example: ["Name1", "Name2", "Name3", "Name4", "Name5"]"""
+    
+    try:
+        async with SESSION_LOCK:
+            result = await run_chatgpt_session(prompt, headless=True)
+            
+            if result == "CAPTCHA_RETRY":
+                result = await run_chatgpt_session(prompt, headless=True, is_retry=True)
+        
+        # Parse JSON response - handle ChatGPT's verbose responses
+        if not result or result.startswith("Error") or result.startswith("No response"):
+            print(f"⚠️ ChatGPT returned no valid response for competitors")
+            return []
+        
+        competitors = extract_json(result)
+        if not isinstance(competitors, list):
+            print(f"⚠️ ChatGPT competitor discovery did not return a list")
+            return []
+        
+        # Clean competitor names
+        competitors = [c.strip() for c in competitors if isinstance(c, str) and c.strip()][:5]
+        print(f"🔍 ChatGPT discovered competitors: {competitors}")
+        return competitors
+        
+    except Exception as e:
+        print(f"❌ ChatGPT competitor discovery failed: {e}")
+        return []
+
+
+async def tag_all_qna_chatgpt(qna_list: list, brand_name: str, competitors: list) -> list:
+    """
+    🔥 BATCH TAG all Q&A with semantic flags using ChatGPT in ONE request
+    Super fast - processes all Q&A in a single browser session
+    Returns updated qna_list with llm_flags
+    """
+    competitors_str = ", ".join(competitors) if competitors else "None specified"
+    
+    # Separate already tagged and need-to-tag
+    already_tagged = []
+    to_tag = []
+    to_tag_indices = []
+    
+    for idx, qna in enumerate(qna_list):
+        qna_dict = qna.dict() if hasattr(qna, 'dict') else dict(qna)
+        
+        if qna_dict.get("llm_flags"):
+            already_tagged.append((idx, qna_dict))
+            continue
+        
+        question = qna_dict.get("question", "")
+        answer = qna_dict.get("answer", "")
+        
+        if not answer or answer == "Not available yet":
+            already_tagged.append((idx, qna_dict))
+            continue
+        
+        to_tag.append(qna_dict)
+        to_tag_indices.append(idx)
+    
+    if not to_tag:
+        print("✅ All Q&A already tagged, skipping ChatGPT call")
+        return [qna_list[i].dict() if hasattr(qna_list[i], 'dict') else dict(qna_list[i]) for i in range(len(qna_list))]
+    
+    print(f"🚀 BATCH tagging {len(to_tag)} Q&A items in ONE ChatGPT request...")
+    
+    # Build batch prompt with all Q&As
+    qna_items_text = ""
+    for i, qna_dict in enumerate(to_tag):
+        question = qna_dict.get("question", "")
+        answer = qna_dict.get("answer", "")
+        # Truncate very long answers to avoid token limits
+        if len(answer) > 500:
+            answer = answer[:500] + "..."
+        qna_items_text += f"""
+--- ITEM {i} ---
+Question: {question}
+Answer: {answer}
+"""
+    
+    prompt = f"""RESPOND WITH ONLY JSON. NO EXPLANATIONS. NO MARKDOWN. JUST A RAW JSON ARRAY.
+
+Analyze these {len(to_tag)} Q&A items for brand "{brand_name}":
+
+{qna_items_text}
+
+For each item, return an object with:
+- brand_in_question: boolean
+- brand_mentioned: boolean  
+- brand_rank: number or null
+- is_recommended: boolean
+- sentiment: "positive" or "neutral_positive" or "neutral" or "negative"
+- citation_type: "first_party" or "third_party" or "none"
+- citation_expected: boolean
+- features_mentioned: string array
+- competitors_mentioned: string array
+
+OUTPUT EXACTLY {len(to_tag)} JSON OBJECTS IN AN ARRAY. START YOUR RESPONSE WITH [ AND END WITH ]. NOTHING ELSE."""
+
+    try:
+        async with SESSION_LOCK:
+            result = await run_chatgpt_session(prompt, headless=True)
+            
+            if result == "CAPTCHA_RETRY":
+                result = await run_chatgpt_session(prompt, headless=True, is_retry=True)
+        
+        if not result or result.startswith("Error") or result.startswith("No response"):
+            print(f"⚠️ ChatGPT returned no valid response for batch tagging")
+            # Return original list without tags
+            return [qna_list[i].dict() if hasattr(qna_list[i], 'dict') else dict(qna_list[i]) for i in range(len(qna_list))]
+        
+        # Parse the batch response
+        tags_array = extract_json(result)
+        
+        if not isinstance(tags_array, list):
+            print(f"⚠️ ChatGPT batch tagging did not return an array, got: {type(tags_array)}")
+            return [qna_list[i].dict() if hasattr(qna_list[i], 'dict') else dict(qna_list[i]) for i in range(len(qna_list))]
+        
+        print(f"✅ Received {len(tags_array)} tags from ChatGPT")
+        
+        # Apply tags to the Q&A items
+        for i, qna_dict in enumerate(to_tag):
+            if i < len(tags_array):
+                flags_data = tags_array[i]
+                if isinstance(flags_data, dict):
+                    llm_flags = {
+                        "brand_in_question": bool(flags_data.get("brand_in_question", False)),
+                        "brand_mentioned": bool(flags_data.get("brand_mentioned", False)),
+                        "brand_rank": flags_data.get("brand_rank"),
+                        "is_recommended": bool(flags_data.get("is_recommended", False)),
+                        "sentiment": flags_data.get("sentiment", "neutral"),
+                        "citation_type": flags_data.get("citation_type", "none"),
+                        "citation_expected": bool(flags_data.get("citation_expected", False)),
+                        "features_mentioned": flags_data.get("features_mentioned", []),
+                        "competitors_mentioned": flags_data.get("competitors_mentioned", [])
+                    }
+                    qna_dict["llm_flags"] = llm_flags
+                    print(f"✅ Tagged Q&A {i+1}/{len(to_tag)}: brand_mentioned={llm_flags['brand_mentioned']}")
+        
+        # Rebuild the full list in original order
+        updated_qna = [None] * len(qna_list)
+        
+        # Place already tagged items
+        for idx, qna_dict in already_tagged:
+            updated_qna[idx] = qna_dict
+        
+        # Place newly tagged items
+        for i, idx in enumerate(to_tag_indices):
+            updated_qna[idx] = to_tag[i]
+        
+        print(f"🎉 BATCH tagging complete! Tagged {len(to_tag)} items in ONE request")
+        return updated_qna
+        
+    except Exception as e:
+        import traceback
+        print(f"❌ ChatGPT batch tagging failed: {e}")
+        traceback.print_exc()
+        # Return original list without tags
+        return [qna_list[i].dict() if hasattr(qna_list[i], 'dict') else dict(qna_list[i]) for i in range(len(qna_list))]

@@ -11,6 +11,8 @@ import json
 import re
 import asyncio  # 🆕 For rate limiting delays
 from datetime import datetime,timedelta
+# 🆕 Import ChatGPT functions for geo-metrics
+from controllers.chatgpt_controller import discover_competitors_chatgpt, tag_all_qna_chatgpt
 
 
 
@@ -324,40 +326,20 @@ async def calculate_geo_metrics_controller(request: Request):
                 except:
                     pass
             
-            # Use LLM to find competitors based on niche
+            # 🔥 Use ChatGPT to find competitors based on niche
             if niche:
                 try:
-                    # 🆕 Use key manager
-                    model = key_manager.get_model("gemini-3-flash-preview")
-                    comp_prompt = f"""You are a competitive analysis expert.
-                    
-Brand: {brand_name}
-Niche: {niche}
-Location: {doc.nation or 'Global'}, {doc.state or ''}
-
-List the top 5 direct competitors of {brand_name} in the {niche} space.
-Return ONLY a JSON array of competitor names, no explanations.
-Example: ["Competitor1", "Competitor2", "Competitor3"]"""
-                    
-                    response = await model.generate_content_async(
-                        comp_prompt,
-                        generation_config=genai.GenerationConfig(
-                            temperature=0.3,
-                            response_mime_type="application/json"
-                        )
+                    competitors = await discover_competitors_chatgpt(
+                        brand_name=brand_name,
+                        niche=niche,
+                        nation=doc.nation or 'Global',
+                        state=doc.state or ''
                     )
-                    competitors = extract_json_from_text(response.text)
                     if not isinstance(competitors, list):
                         competitors = []
-                    print(f"🔍 Auto-discovered competitors: {competitors}")
-                    # Rate limit delay after competitor discovery
-                    print(f"⏳ Waiting 20s for rate limit...")
-                    await asyncio.sleep(20)
+                    print(f"🔍 ChatGPT auto-discovered competitors: {competitors}")
                 except Exception as e:
-                    print(f"❌ Competitor discovery failed: {e}")
-                    # 🆕 Try switching key if rate limit
-                    if key_manager.is_rate_limit_error(e) and key_manager.switch_to_next_key():
-                        print("🔄 Switched API key, continuing...")
+                    print(f"❌ ChatGPT competitor discovery failed: {e}")
                     competitors = []
         
         qna_list = doc.qna or []
@@ -379,126 +361,12 @@ Example: ["Competitor1", "Competitor2", "Competitor3"]"""
                 needs_tagging = True
                 break
         
-        # 🔥 Auto-tag if needed
+        # 🔥 Auto-tag if needed using ChatGPT
         if needs_tagging:
-            print(f"🔄 Auto-tagging Q&A for brand: {brand_name}")
-            competitors_str = ", ".join(competitors) if competitors else "None specified"
+            print(f"🔄 Auto-tagging Q&A for brand: {brand_name} using ChatGPT")
             
-            # 🆕 Reset to first key for new tagging session
-            key_manager.reset_to_first_key()
-            model = key_manager.get_model("gemini-3-flash-preview")
-            
-            updated_qna = []
-            for idx, qna in enumerate(qna_list):
-                qna_dict = qna.dict() if hasattr(qna, 'dict') else dict(qna)
-                
-                # Skip if already tagged
-                if qna_dict.get("llm_flags"):
-                    updated_qna.append(qna_dict)
-                    continue
-                
-                question = qna_dict.get("question", "")
-                answer = qna_dict.get("answer", "")
-                
-                if not answer or answer == "Not available yet":
-                    updated_qna.append(qna_dict)
-                    continue
-                
-                # LLM Prompt for semantic tagging
-                prompt = f"""You are a GEO (Generative Engine Optimization) analyzer.
-
-Given:
-Brand: {brand_name}
-Competitors: {competitors_str}
-
-Question:
-{question}
-
-Answer:
-{answer}
-
-Analyze and return STRICT JSON with these fields ONLY:
-- brand_in_question: boolean (does the question itself contain "{brand_name}" or variations of it?)
-- brand_mentioned: boolean (is {brand_name} mentioned in the answer?)
-- brand_rank: number or null (position where {brand_name} appears: 1=first, 2=second, etc. null if not mentioned)
-- is_recommended: boolean (is {brand_name} positively recommended?)
-- sentiment: string (positive/neutral_positive/neutral/negative - sentiment towards {brand_name}. Use "neutral_positive" for mildly positive or generally favorable language without strong endorsement)
-- citation_type: string (first_party/third_party/none - does answer cite {brand_name}'s official source?)
-- citation_expected: boolean (is this a type of question where citations/sources are expected? e.g. factual claims, comparisons, reviews)
-- features_mentioned: array of strings (features/qualities mentioned for {brand_name})
-- competitors_mentioned: array of strings (which competitors from the list are mentioned?)
-
-Return ONLY valid JSON, no explanations."""
-
-                # 🆕 Try with current key, rotate on rate limit
-                max_retries = len(key_manager.keys) if key_manager.keys else 1
-                success = False
-                
-                for retry in range(max_retries):
-                    try:
-                        response = await model.generate_content_async(
-                            prompt,
-                            generation_config=genai.GenerationConfig(
-                                temperature=0.2,
-                                response_mime_type="application/json"
-                            )
-                        )
-                        
-                        flags_data = extract_json_from_text(response.text)
-                        
-                        llm_flags = {
-                            "brand_in_question": bool(flags_data.get("brand_in_question", False)),
-                            "brand_mentioned": bool(flags_data.get("brand_mentioned", False)),
-                            "brand_rank": flags_data.get("brand_rank"),
-                            "is_recommended": bool(flags_data.get("is_recommended", False)),
-                            "sentiment": flags_data.get("sentiment", "neutral"),
-                            "citation_type": flags_data.get("citation_type", "none"),
-                            "citation_expected": bool(flags_data.get("citation_expected", False)),
-                            "features_mentioned": flags_data.get("features_mentioned", []),
-                            "competitors_mentioned": flags_data.get("competitors_mentioned", [])
-                        }
-                        
-                        qna_dict["llm_flags"] = llm_flags
-                        print(f"✅ Tagged Q&A {idx + 1}/{len(qna_list)} using {key_manager.get_current_key_name()}")
-                        success = True
-                        break  # Success, exit retry loop
-                        
-                    except Exception as e:
-                        error_str = str(e)
-                        print(f"❌ Error for Q&A {idx + 1} with {key_manager.get_current_key_name()}: {error_str[:100]}")
-                        
-                        # 🆕 Check if rate limit error
-                        if key_manager.is_rate_limit_error(e):
-                            print(f"⚠️ Rate limit hit on {key_manager.get_current_key_name()}")
-                            
-                            # 🆕 Save progress before switching keys
-                            if updated_qna:
-                                print(f"💾 Saving progress ({len(updated_qna)} items tagged so far)...")
-                                await update_one(
-                                    PromptQuestionsModel,
-                                    {"_id": ObjectId(prompt_question_id)},
-                                    {"$set": {"qna": updated_qna + [qna_dict] + [q.dict() if hasattr(q, 'dict') else dict(q) for q in qna_list[idx+1:]]}}
-                                )
-                            
-                            # 🆕 Try switching to next key
-                            if key_manager.switch_to_next_key():
-                                model = key_manager.get_model("gemini-3-flash-preview")
-                                print(f"🔄 Retrying Q&A {idx + 1} with new key...")
-                                continue  # Retry with new key
-                            else:
-                                print(f"⛔ All keys exhausted! Stopping at Q&A {idx + 1}")
-                                break
-                        else:
-                            # Non-rate-limit error, skip this item
-                            print(f"⚠️ Non-rate-limit error, skipping Q&A {idx + 1}")
-                            break
-                
-                updated_qna.append(qna_dict)
-                
-                # 🆕 Rate limiting: Wait 20 seconds to stay within limit
-                if idx < len(qna_list) - 1:
-                    print(f"⏳ Waiting 20s for rate limit (5 req/min)...")
-                    await asyncio.sleep(20)
+            # Use ChatGPT for tagging all Q&A
+            updated_qna = await tag_all_qna_chatgpt(qna_list, brand_name, competitors)
             
             # Save tagged data to DB
             await update_one(
@@ -508,6 +376,34 @@ Return ONLY valid JSON, no explanations."""
             )
             
             # Refresh doc with updated data
+            doc = await find_one(PromptQuestionsModel, {"_id": ObjectId(prompt_question_id)})
+            qna_list = doc.qna or []
+        
+        # 🆕 Update capture field based on brand_name in answer (case-insensitive)
+        brand_name_lower = brand_name.lower()
+        capture_updates_needed = False
+        updated_qna_for_capture = []
+        
+        for qna in qna_list:
+            qna_dict = qna.dict() if hasattr(qna, 'dict') else dict(qna)
+            answer = (qna_dict.get("answer") or "").lower()
+            
+            # Check if brand_name exists in answer (case-insensitive)
+            if brand_name_lower in answer:
+                if not qna_dict.get("capture"):
+                    qna_dict["capture"] = True
+                    capture_updates_needed = True
+            updated_qna_for_capture.append(qna_dict)
+        
+        # Save capture updates if any
+        if capture_updates_needed:
+            print(f"✅ Updating capture field for Q&A items with brand mention")
+            await update_one(
+                PromptQuestionsModel,
+                {"_id": ObjectId(prompt_question_id)},
+                {"$set": {"qna": updated_qna_for_capture}}
+            )
+            # Refresh doc
             doc = await find_one(PromptQuestionsModel, {"_id": ObjectId(prompt_question_id)})
             qna_list = doc.qna or []
         
@@ -746,51 +642,25 @@ Return ONLY valid JSON, no explanations."""
 }
 
         try:
-            # Check if metrics already exist for this prompt_question_id
-            existing_metrics = await GeoMetricsModel.find_one(
-                {"prompt_question_id": ObjectId(prompt_question_id)}
+            # 🆕 ALWAYS create new metrics document on every recalculate
+            new_metrics = GeoMetricsModel(
+                prompt_question_id=ObjectId(prompt_question_id),
+                brand_name=brand_name,
+                total_prompts=total_prompts,
+                using_llm_flags=using_llm_flags,
+                brand_agnostic_metrics=BrandAgnosticMetrics(**metrics_result["brand_agnostic_metrics"]),
+                brand_included_metrics=BrandIncludedMetrics(**metrics_result["brand_included_metrics"]),
+                total_mentions=total_mentions,
+                brand_mention_rate=combined_brand_mention_rate,
+                top_3_mentions=agnostic_top_3 + included_top_3,
+                top_3_position_rate=combined_top_3_rate,
+                zero_mention_count=len(agnostic_zero_mention_prompts) + len(included_zero_mention_prompts),
+                competitor_mentions={comp: count for comp, count in competitor_mentions.items() if count > 0},
+                comparison_presence=comparison_presence,
+                brand_features=list(brand_features)
             )
-            print("existing_metrics--->",existing_metrics)
-            if existing_metrics and existing_metrics.updatedAt > datetime.utcnow() - timedelta(days=7):
-                print("hello1")
-                # Update existing metrics
-                existing_metrics.brand_name = brand_name
-                existing_metrics.total_prompts = total_prompts
-                existing_metrics.using_llm_flags = using_llm_flags
-                existing_metrics.brand_agnostic_metrics = BrandAgnosticMetrics(**metrics_result["brand_agnostic_metrics"])
-                existing_metrics.brand_included_metrics = BrandIncludedMetrics(**metrics_result["brand_included_metrics"])
-                existing_metrics.total_mentions = total_mentions
-                existing_metrics.brand_mention_rate = combined_brand_mention_rate
-                existing_metrics.top_3_mentions = agnostic_top_3 + included_top_3
-                existing_metrics.top_3_position_rate = combined_top_3_rate
-                existing_metrics.zero_mention_count = len(agnostic_zero_mention_prompts) + len(included_zero_mention_prompts)
-                existing_metrics.competitor_mentions = {comp: count for comp, count in competitor_mentions.items() if count > 0}
-                existing_metrics.comparison_presence = comparison_presence
-                existing_metrics.brand_features = list(brand_features)
-                existing_metrics.updatedAt = datetime.utcnow()
-                await existing_metrics.save()
-                print(f"✅ Updated GEO metrics for prompt_question_id: {prompt_question_id}")
-            else:
-                print("hello2")
-                # Create new metrics document
-                new_metrics = GeoMetricsModel(
-                    prompt_question_id=ObjectId(prompt_question_id),
-                    brand_name=brand_name,
-                    total_prompts=total_prompts,
-                    using_llm_flags=using_llm_flags,
-                    brand_agnostic_metrics=BrandAgnosticMetrics(**metrics_result["brand_agnostic_metrics"]),
-                    brand_included_metrics=BrandIncludedMetrics(**metrics_result["brand_included_metrics"]),
-                    total_mentions=total_mentions,
-                    brand_mention_rate=combined_brand_mention_rate,
-                    top_3_mentions=agnostic_top_3 + included_top_3,
-                    top_3_position_rate=combined_top_3_rate,
-                    zero_mention_count=len(agnostic_zero_mention_prompts) + len(included_zero_mention_prompts),
-                    competitor_mentions={comp: count for comp, count in competitor_mentions.items() if count > 0},
-                    comparison_presence=comparison_presence,
-                    brand_features=list(brand_features)
-                )
-                await new_metrics.insert()
-                print(f"✅ Created new GEO metrics for prompt_question_id: {prompt_question_id}")
+            await new_metrics.insert()
+            print(f"✅ Created new GEO metrics entry for prompt_question_id: {prompt_question_id}")
         except Exception as save_error:
             import traceback
             print(traceback.format_exc())
@@ -847,7 +717,8 @@ Return ONLY valid JSON, no explanations."""
             # 🆕 Only include competitors that were actually mentioned in answers
             "competitor_mentions": {comp: count for comp, count in competitor_mentions.items() if count > 0},
             "comparison_presence": comparison_presence,
-            "brand_features": list(brand_features)
+            "brand_features": list(brand_features),
+            "createdAt": datetime.utcnow().isoformat()  # 🆕 Return timestamp for frontend
         }
         
     except HTTPException as e:
@@ -876,9 +747,10 @@ async def get_genrated_metrics_controller(request: Request):
         
         print(f"📊 Fetching GEO metrics for: {prompt_question_id}")
         
-        # Fetch from geo_metrics collection
+        # 🆕 Fetch LATEST entry from geo_metrics collection (sorted by createdAt descending)
         result = await GeoMetricsModel.find_one(
-            {"prompt_question_id": ObjectId(prompt_question_id)}
+            {"prompt_question_id": ObjectId(prompt_question_id)},
+            sort=[("createdAt", -1)]  # Get the latest entry
         )
         
         if not result:
@@ -887,7 +759,10 @@ async def get_genrated_metrics_controller(request: Request):
                 detail="GEO metrics not found. Please calculate metrics first using /calculate-geo-metrics endpoint."
             )
         
-        return result
+        # 🆕 Convert to dict and include createdAt for frontend
+        response = result.dict()
+        response["createdAt"] = result.createdAt.isoformat() if result.createdAt else None
+        return response
         
     except HTTPException:
         raise
