@@ -259,352 +259,657 @@ Return ONLY valid JSON, no explanations."""
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# async def calculate_geo_metrics_controller(request: Request):
+#     """
+#     Calculate GEO (Generative Engine Optimization) metrics from prompt_questions Q&A data.
+#     Auto-calls LLM tagging if Q&A not tagged yet.
+    
+#     Request body:
+#         - prompt_question_id: str (required)
+#         - brand_name: str (optional - if not provided, uses project/company data)
+#         - brand_url: str (optional - for first-party citation check)
+#         - competitors: list[str] (optional - for competitive metrics)
+#     """
+#     try:
+#         one_week_ago = datetime.utcnow() - timedelta(days=7)
+#         body = await request.json()
+#         prompt_question_id = body.get("prompt_question_id")
+#         brand_name = body.get("brand_name", "").strip()
+#         brand_url = body.get("brand_url", "").strip()
+#         competitors = body.get("competitors", [])
+        
+#         if not prompt_question_id:
+#             raise HTTPException(status_code=400, detail="prompt_question_id is required")
+        
+#         # Fetch prompt_questions document
+#         doc = await find_one(PromptQuestionsModel, {"_id": ObjectId(prompt_question_id)})
+#         if not doc:
+#             raise HTTPException(status_code=404, detail="Prompt questions document not found")
+#         brand_url = doc.website_url
+#         print("brand_url",brand_url)
+#         # 🔥 Auto-fetch brand_name from website analysis if not provided
+#         if not brand_name:
+#             # Try to get brand from chatgpt/gemini website analysis
+#             if doc.chatgpt_website_analysis:
+#                 try:
+#                     analysis = json.loads(doc.chatgpt_website_analysis) if isinstance(doc.chatgpt_website_analysis, str) else doc.chatgpt_website_analysis
+#                     brand_name = analysis.get("brandName", "") or analysis.get("brand_name", "")
+#                 except:
+#                     pass
+#             if not brand_name and doc.gemini_website_analysis:
+#                 try:
+#                     analysis = json.loads(doc.gemini_website_analysis) if isinstance(doc.gemini_website_analysis, str) else doc.gemini_website_analysis
+#                     brand_name = analysis.get("brandName", "") or analysis.get("brand_name", "")
+#                 except:
+#                     pass
+#             if not brand_name and doc.website_url:
+#                 # Fallback to domain name
+#                 brand_name = doc.website_url.replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0]
+        
+#         if not brand_name:
+#             raise HTTPException(status_code=400, detail="brand_name is required (could not auto-detect)")
+        
+#         # 🔥 Auto-discover competitors if not provided
+#         niche = ""
+#         if not competitors:
+#             # Try to get niche from website analysis
+#             if doc.chatgpt_website_analysis:
+#                 try:
+#                     analysis = json.loads(doc.chatgpt_website_analysis) if isinstance(doc.chatgpt_website_analysis, str) else doc.chatgpt_website_analysis
+#                     niche = analysis.get("niche", "")
+#                 except:
+#                     pass
+#             if not niche and doc.gemini_website_analysis:
+#                 try:
+#                     analysis = json.loads(doc.gemini_website_analysis) if isinstance(doc.gemini_website_analysis, str) else doc.gemini_website_analysis
+#                     niche = analysis.get("niche", "")
+#                 except:
+#                     pass
+            
+#             # 🔥 Use ChatGPT to find competitors based on niche
+#             if niche:
+#                 try:
+#                     competitors = await discover_competitors_chatgpt(
+#                         brand_name=brand_name,
+#                         niche=niche,
+#                         nation=doc.nation or 'Global',
+#                         state=doc.state or ''
+#                     )
+#                     if not isinstance(competitors, list):
+#                         competitors = []
+#                     print(f"🔍 ChatGPT auto-discovered competitors: {competitors}")
+#                 except Exception as e:
+#                     print(f"❌ ChatGPT competitor discovery failed: {e}")
+#                     competitors = []
+        
+#         qna_list = doc.qna or []
+#         total_prompts = len(qna_list)
+        
+#         if total_prompts == 0:
+#             return {
+#                 "total_prompts": 0,
+#                 "brand_name": brand_name,
+#                 "message": "No Q&A data found"
+#             }
+        
+#         # 🔥 Check if any Q&A needs LLM tagging
+#         needs_tagging = False
+#         for qna in qna_list:
+#             llm_flags = getattr(qna, 'llm_flags', None)
+#             answer = qna.answer or ""
+#             if answer and answer != "Not available yet" and not llm_flags:
+#                 needs_tagging = True
+#                 break
+        
+#         # 🔥 Auto-tag if needed using ChatGPT
+#         if needs_tagging:
+#             print(f"🔄 Auto-tagging Q&A for brand: {brand_name} using ChatGPT")
+            
+#             # Use ChatGPT for tagging all Q&A
+#             updated_qna = await tag_all_qna_chatgpt(qna_list, brand_name, competitors)
+            
+#             # Save tagged data to DB
+#             await update_one(
+#                 PromptQuestionsModel,
+#                 {"_id": ObjectId(prompt_question_id)},
+#                 {"$set": {"qna": updated_qna}}
+#             )
+            
+#             # Refresh doc with updated data
+#             doc = await find_one(PromptQuestionsModel, {"_id": ObjectId(prompt_question_id)})
+#             qna_list = doc.qna or []
+        
+#         # 🆕 Update capture field based on brand_name in answer (case-insensitive)
+#         brand_name_lower = brand_name.lower()
+#         capture_updates_needed = False
+#         updated_qna_for_capture = []
+        
+#         for qna in qna_list:
+#             qna_dict = qna.dict() if hasattr(qna, 'dict') else dict(qna)
+#             answer = (qna_dict.get("answer") or "").lower()
+            
+#             # Check if brand_name exists in answer (case-insensitive)
+#             if brand_name_lower in answer:
+#                 if not qna_dict.get("capture"):
+#                     qna_dict["capture"] = True
+#                     capture_updates_needed = True
+#             updated_qna_for_capture.append(qna_dict)
+        
+#         # Save capture updates if any
+#         if capture_updates_needed:
+#             print(f"✅ Updating capture field for Q&A items with brand mention")
+#             await update_one(
+#                 PromptQuestionsModel,
+#                 {"_id": ObjectId(prompt_question_id)},
+#                 {"$set": {"qna": updated_qna_for_capture}}
+#             )
+#             # Refresh doc
+#             doc = await find_one(PromptQuestionsModel, {"_id": ObjectId(prompt_question_id)})
+#             qna_list = doc.qna or []
+        
+
+#         # 🆕 Initialize counters for BRAND-AGNOSTIC prompts (real brand discovery)
+#         agnostic_total = 0
+#         agnostic_mentions = 0
+#         agnostic_top_3 = 0
+#         agnostic_recommended = 0
+#         agnostic_positive_sentiment = 0
+#         agnostic_neutral_sentiment = 0
+#         agnostic_negative_sentiment = 0
+#         agnostic_citations = 0
+#         agnostic_citations_expected = 0
+#         agnostic_zero_mention_prompts = []
+        
+#         # 🆕 Initialize counters for BRAND-INCLUDED prompts (branded queries)
+#         included_total = 0
+#         included_mentions = 0
+#         included_top_3 = 0
+#         included_recommended = 0
+#         included_positive_sentiment = 0
+#         included_neutral_sentiment = 0
+#         included_negative_sentiment = 0
+#         included_citations = 0
+#         included_citations_expected = 0
+#         included_zero_mention_prompts = []
+        
+#         # Common trackers
+#         competitor_mentions = {comp: 0 for comp in competitors}
+#         brand_features = set()
+#         other_brands_recommended = {}  # 🆕 Track all brands recommended in answers (excluding user's brand)
+#         using_llm_flags = False
+        
+#         for qna in qna_list:
+#             question = qna.question or ""
+#             answer = qna.answer or ""
+#             category_name = qna.category_name
+            
+#             # 🔥 Use LLM flags if available (10x faster + accurate)
+#             llm_flags = getattr(qna, 'llm_flags', None)
+#             if llm_flags and hasattr(llm_flags, 'brand_mentioned'):
+#                 using_llm_flags = True
+                
+#                 # 🆕 Determine which bucket this Q&A belongs to
+#                 is_brand_in_question = getattr(llm_flags, 'brand_in_question', False)
+#                 citation_expected = getattr(llm_flags, 'citation_expected', False)
+                
+#                 if is_brand_in_question:
+#                     # ===== BRAND-INCLUDED BUCKET =====
+#                     included_total += 1
+#                     if citation_expected:
+#                         included_citations_expected += 1
+                    
+#                     if llm_flags.brand_mentioned:
+#                         included_mentions += 1
+                        
+#                         # Top-3 position
+#                         if llm_flags.brand_rank and llm_flags.brand_rank <= 3:
+#                             included_top_3 += 1
+                        
+#                         # First-party citation
+#                         if llm_flags.citation_type == "first_party":
+#                             included_citations += 1
+                        
+#                         # Recommendation
+#                         if llm_flags.is_recommended:
+#                             included_recommended += 1
+                        
+#                         # 🆕 Track all sentiment types
+#                         if llm_flags.sentiment in ["positive", "neutral_positive"]:
+#                             included_positive_sentiment += 1
+#                         elif llm_flags.sentiment == "neutral":
+#                             included_neutral_sentiment += 1
+#                         elif llm_flags.sentiment == "negative":
+#                             included_negative_sentiment += 1
+                        
+#                         # Features
+#                         if llm_flags.features_mentioned:
+#                             brand_features.update(llm_flags.features_mentioned)
+#                     else:
+#                         included_zero_mention_prompts.append({
+#                             "question": question,
+#                             "answer_snippet": answer[:200] + "..." if len(answer) > 200 else answer,
+#                             "category_name": category_name
+#                         })
+#                 else:
+#                     # ===== BRAND-AGNOSTIC BUCKET (TRUE DISCOVERY) =====
+#                     agnostic_total += 1
+#                     if citation_expected:
+#                         agnostic_citations_expected += 1
+                    
+#                     if llm_flags.brand_mentioned:
+#                         agnostic_mentions += 1
+                        
+#                         # Top-3 position
+#                         if llm_flags.brand_rank and llm_flags.brand_rank <= 3:
+#                             agnostic_top_3 += 1
+                        
+#                         # First-party citation
+#                         if llm_flags.citation_type == "first_party":
+#                             agnostic_citations += 1
+                        
+#                         # Recommendation
+#                         if llm_flags.is_recommended:
+#                             agnostic_recommended += 1
+                        
+#                         # 🆕 Track all sentiment types
+#                         if llm_flags.sentiment in ["positive", "neutral_positive"]:
+#                             agnostic_positive_sentiment += 1
+#                         elif llm_flags.sentiment == "neutral":
+#                             agnostic_neutral_sentiment += 1
+#                         elif llm_flags.sentiment == "negative":
+#                             agnostic_negative_sentiment += 1
+                        
+#                         # Features
+#                         if llm_flags.features_mentioned:
+#                             brand_features.update(llm_flags.features_mentioned)
+                        
+#                         # Competitors (only track in agnostic bucket for fair comparison)
+#                         if llm_flags.competitors_mentioned:
+#                             for comp in llm_flags.competitors_mentioned:
+#                                 if comp in competitor_mentions:
+#                                     competitor_mentions[comp] += 1
+                        
+#                         # 🆕 Track all other brands recommended in answers
+#                         if hasattr(llm_flags, 'other_brands_recommended') and llm_flags.other_brands_recommended:
+#                             for other_brand in llm_flags.other_brands_recommended:
+#                                 if other_brand and other_brand.strip():
+#                                     other_brand_clean = other_brand.strip()
+#                                     other_brands_recommended[other_brand_clean] = other_brands_recommended.get(other_brand_clean, 0) + 1
+#                     else:
+#                         agnostic_zero_mention_prompts.append({
+#                             "question": question,
+#                             "answer_snippet": answer[:200] + "..." if len(answer) > 200 else answer,
+#                             "category_name": category_name
+#                         })
+#             else:
+#                 # 🔹 Fallback: Regex-based detection (slower, less accurate)
+#                 # Count as agnostic by default when no LLM flags
+#                 brand_pattern = re.compile(re.escape(brand_name), re.IGNORECASE)
+                
+#                 # Check if brand is in question
+#                 brand_in_q = bool(brand_pattern.search(question))
+                
+#                 if brand_in_q:
+#                     included_total += 1
+#                     bucket_mentions = included_mentions
+#                 else:
+#                     agnostic_total += 1
+                
+#                 brand_match = brand_pattern.search(answer)
+                
+#                 if brand_match:
+#                     if brand_in_q:
+#                         included_mentions += 1
+#                     else:
+#                         agnostic_mentions += 1
+#                     brand_pos = brand_match.start()
+                    
+#                     # Simple heuristic for top-3
+#                     lines = [l.strip() for l in answer.split('\n') if l.strip()]
+#                     numbered_items = [l for l in lines if re.match(r'^[\d\.\-\*]+', l)]
+                    
+#                     is_top_3 = False
+#                     if numbered_items:
+#                         first_3_items = ' '.join(numbered_items[:3])
+#                         if brand_pattern.search(first_3_items):
+#                             is_top_3 = True
+#                     elif brand_pos < len(answer) * 0.3:
+#                         is_top_3 = True
+                    
+#                     if is_top_3:
+#                         if brand_in_q:
+#                             included_top_3 += 1
+#                         else:
+#                             agnostic_top_3 += 1
+                    
+#                     # First-party citation check
+#                     if brand_url and brand_url.lower() in answer.lower():
+#                         if brand_in_q:
+#                             included_citations += 1
+#                         else:
+#                             agnostic_citations += 1
+#                 else:
+#                     if brand_in_q:
+#                         included_zero_mention_prompts.append({
+#                             "question": question,
+#                             "answer_snippet": answer[:200] + "..." if len(answer) > 200 else answer,
+#                             "category_name": category_name
+#                         })
+#                     else:
+#                         agnostic_zero_mention_prompts.append({
+#                             "question": question,
+#                             "answer_snippet": answer[:200] + "..." if len(answer) > 200 else answer,
+#                             "category_name": category_name
+#                         })
+        
+#         # 🆕 Calculate SEGMENTED metrics
+        
+#         # Brand-Agnostic Metrics (TRUE organic discovery)
+#         agnostic_brand_mention_rate = round((agnostic_mentions / agnostic_total) * 100, 2) if agnostic_total > 0 else 0
+#         agnostic_top_3_rate = round((agnostic_top_3 / agnostic_mentions) * 100, 2) if agnostic_mentions > 0 else 0
+#         agnostic_recommendation_rate = round((agnostic_recommended / agnostic_mentions) * 100, 2) if agnostic_mentions > 0 else 0
+#         agnostic_positive_sentiment_rate = round((agnostic_positive_sentiment / agnostic_mentions) * 100, 2) if agnostic_mentions > 0 else 0
+#         agnostic_neutral_sentiment_rate = round((agnostic_neutral_sentiment / agnostic_mentions) * 100, 2) if agnostic_mentions > 0 else 0
+#         agnostic_negative_sentiment_rate = round((agnostic_negative_sentiment / agnostic_mentions) * 100, 2) if agnostic_mentions > 0 else 0
+#         agnostic_citation_rate = round((agnostic_citations / agnostic_citations_expected) * 100, 2) if agnostic_citations_expected > 0 else 0
+        
+#         # Brand-Included Metrics (branded query performance)
+#         included_brand_mention_rate = round((included_mentions / included_total) * 100, 2) if included_total > 0 else 0
+#         included_top_3_rate = round((included_top_3 / included_mentions) * 100, 2) if included_mentions > 0 else 0
+#         included_recommendation_rate = round((included_recommended / included_mentions) * 100, 2) if included_mentions > 0 else 0
+#         included_positive_sentiment_rate = round((included_positive_sentiment / included_mentions) * 100, 2) if included_mentions > 0 else 0
+#         included_neutral_sentiment_rate = round((included_neutral_sentiment / included_mentions) * 100, 2) if included_mentions > 0 else 0
+#         included_negative_sentiment_rate = round((included_negative_sentiment / included_mentions) * 100, 2) if included_mentions > 0 else 0
+#         included_citation_rate = round((included_citations / included_citations_expected) * 100, 2) if included_citations_expected > 0 else 0
+        
+#         # Combined metrics (for legacy support)
+#         total_mentions = agnostic_mentions + included_mentions
+#         combined_brand_mention_rate = round((total_mentions / total_prompts) * 100, 2) if total_prompts > 0 else 0
+#         combined_top_3_rate = round(((agnostic_top_3 + included_top_3) / total_mentions) * 100, 2) if total_mentions > 0 else 0
+        
+#         # Comparison presence (how often brand appears with competitors)
+#         comparison_presence = 0
+#         prompts_with_comparison = sum(1 for comp, count in competitor_mentions.items() if count > 0)
+#         if competitors and agnostic_mentions > 0:
+#             comparison_presence = round((prompts_with_comparison / len(competitors)) * 100, 2)
+#         print("hello12222")
+        
+#         print("hello122226666")
+#         # 🆕 Save metrics to database
+#         metrics_result = {
+#     "brand_agnostic_metrics": {
+#         "total_prompts": agnostic_total,
+#         "mentions": agnostic_mentions,
+#         "brand_mention_rate": agnostic_brand_mention_rate,
+#         "top_3_mentions": agnostic_top_3,
+#         "top_3_position_rate": agnostic_top_3_rate,
+#         "recommendation_rate": agnostic_recommendation_rate,
+#         "positive_sentiment_rate": agnostic_positive_sentiment_rate,
+#         "neutral_sentiment_rate": agnostic_neutral_sentiment_rate,
+#         "negative_sentiment_rate": agnostic_negative_sentiment_rate,
+#         "citations_expected": agnostic_citations_expected,
+#         "first_party_citations": agnostic_citations,
+#         "first_party_citation_rate": agnostic_citation_rate,
+#         "zero_mention_count": len(agnostic_zero_mention_prompts),
+#     },
+#     "brand_included_metrics": {
+#         "total_prompts": included_total,
+#         "mentions": included_mentions,
+#         "brand_mention_rate": included_brand_mention_rate,
+#         "top_3_mentions": included_top_3,
+#         "top_3_position_rate": included_top_3_rate,
+#         "recommendation_rate": included_recommendation_rate,
+#         "positive_sentiment_rate": included_positive_sentiment_rate,
+#         "neutral_sentiment_rate": included_neutral_sentiment_rate,
+#         "negative_sentiment_rate": included_negative_sentiment_rate,
+#         "citations_expected": included_citations_expected,
+#         "first_party_citations": included_citations,
+#         "first_party_citation_rate": included_citation_rate,
+#         "zero_mention_count": len(included_zero_mention_prompts),
+#     }
+# }
+
+#         try:
+#             # 🆕 ALWAYS create new metrics document on every recalculate
+#             new_metrics = GeoMetricsModel(
+#                 prompt_question_id=ObjectId(prompt_question_id),
+#                 brand_name=brand_name,
+#                 total_prompts=total_prompts,
+#                 using_llm_flags=using_llm_flags,
+#                 brand_agnostic_metrics=BrandAgnosticMetrics(**metrics_result["brand_agnostic_metrics"]),
+#                 brand_included_metrics=BrandIncludedMetrics(**metrics_result["brand_included_metrics"]),
+#                 total_mentions=total_mentions,
+#                 brand_mention_rate=combined_brand_mention_rate,
+#                 top_3_mentions=agnostic_top_3 + included_top_3,
+#                 top_3_position_rate=combined_top_3_rate,
+#                 zero_mention_count=len(agnostic_zero_mention_prompts) + len(included_zero_mention_prompts),
+#                 competitor_mentions={comp: count for comp, count in competitor_mentions.items() if count > 0},
+#                 comparison_presence=comparison_presence,
+#                 brand_features=list(brand_features)
+#             )
+#             await new_metrics.insert()
+#             print(f"✅ Created new GEO metrics entry for prompt_question_id: {prompt_question_id}")
+#         except Exception as save_error:
+#             import traceback
+#             print(traceback.format_exc())
+#             print(f"⚠️ Failed to save metrics to DB: {save_error}")
+#             # Continue and return metrics even if save fails
+        
+#         return {
+#             "brand_name": brand_name,
+#             "total_prompts": total_prompts,
+#             "using_llm_flags": using_llm_flags,
+            
+#             # 🆕 SEGMENTED METRICS - Brand Agnostic (TRUE discovery metrics)
+#             "brand_agnostic_metrics": {
+#                 "description": "Metrics from prompts WITHOUT brand name - shows real organic discovery",
+#                 "total_prompts": agnostic_total,
+#                 "mentions": agnostic_mentions,
+#                 "brand_mention_rate": agnostic_brand_mention_rate,
+#                 "top_3_mentions": agnostic_top_3,
+#                 "top_3_position_rate": agnostic_top_3_rate,
+#                 "recommendation_rate": agnostic_recommendation_rate,
+#                 "positive_sentiment_rate": agnostic_positive_sentiment_rate,
+#                 "neutral_sentiment_rate": agnostic_neutral_sentiment_rate,
+#                 "negative_sentiment_rate": agnostic_negative_sentiment_rate,
+#                 "citations_expected": agnostic_citations_expected,
+#                 "first_party_citations": agnostic_citations,
+#                 "first_party_citation_rate": agnostic_citation_rate,
+#                 "zero_mention_count": len(agnostic_zero_mention_prompts),
+#                 "zero_mention_prompts": agnostic_zero_mention_prompts
+#             },
+            
+#             # 🆕 SEGMENTED METRICS - Brand Included (branded query metrics)
+#             "brand_included_metrics": {
+#                 "description": "Metrics from prompts WITH brand name - shows branded query performance",
+#                 "total_prompts": included_total,
+#                 "mentions": included_mentions,
+#                 "brand_mention_rate": included_brand_mention_rate,
+#                 "top_3_mentions": included_top_3,
+#                 "top_3_position_rate": included_top_3_rate,
+#                 "recommendation_rate": included_recommendation_rate,
+#                 "positive_sentiment_rate": included_positive_sentiment_rate,
+#                 "neutral_sentiment_rate": included_neutral_sentiment_rate,
+#                 "negative_sentiment_rate": included_negative_sentiment_rate,
+#                 "citations_expected": included_citations_expected,
+#                 "first_party_citations": included_citations,
+#                 "first_party_citation_rate": included_citation_rate,
+#                 "zero_mention_count": len(included_zero_mention_prompts),
+#                 "zero_mention_prompts": included_zero_mention_prompts
+#             },
+            
+#             # Combined (legacy support + overall view)
+#             "total_mentions": total_mentions,
+#             "brand_mention_rate": combined_brand_mention_rate,
+#             "top_3_mentions": agnostic_top_3 + included_top_3,
+#             "top_3_position_rate": combined_top_3_rate,
+#             "zero_mention_count": len(agnostic_zero_mention_prompts) + len(included_zero_mention_prompts),
+            
+#             # Competitive Metrics (from agnostic bucket only for fair comparison)
+#             # 🆕 Only include competitors that were actually mentioned in answers
+#             "competitor_mentions": {comp: count for comp, count in competitor_mentions.items() if count > 0},
+#             "comparison_presence": comparison_presence,
+#             "brand_features": list(brand_features),
+#             # 🆕 All other brands/competitors recommended in answers (sorted by frequency)
+#             "other_brands_recommended": dict(sorted(other_brands_recommended.items(), key=lambda x: x[1], reverse=True)),
+#             "createdAt": datetime.utcnow().isoformat()  # 🆕 Return timestamp for frontend
+#         }
+        
+#     except HTTPException as e:
+#         import traceback
+#         print(traceback.format_exc())
+#         raise HTTPException(status_code=500, detail=str(e))  
+#     except Exception as e:
+#         import traceback
+#         print(traceback.format_exc())
+#         raise HTTPException(status_code=500, detail=str(e))      
+
+
+
+
 async def calculate_geo_metrics_controller(request: Request):
     """
-    Calculate GEO (Generative Engine Optimization) metrics from prompt_questions Q&A data.
-    Auto-calls LLM tagging if Q&A not tagged yet.
-    
-    Request body:
-        - prompt_question_id: str (required)
-        - brand_name: str (optional - if not provided, uses project/company data)
-        - brand_url: str (optional - for first-party citation check)
-        - competitors: list[str] (optional - for competitive metrics)
+    ✅ OPTIMIZED: Calculates GEO metrics from pre-tagged Q&A data.
+    This version assumes that llm_flags already exist for all relevant Q&A,
+    as they are generated immediately after an answer is created/updated.
     """
     try:
-        one_week_ago = datetime.utcnow() - timedelta(days=7)
         body = await request.json()
         prompt_question_id = body.get("prompt_question_id")
-        brand_name = body.get("brand_name", "").strip()
-        brand_url = body.get("brand_url", "").strip()
-        competitors = body.get("competitors", [])
         
         if not prompt_question_id:
             raise HTTPException(status_code=400, detail="prompt_question_id is required")
         
-        # Fetch prompt_questions document
+        # --- Step 1: Fetch Document and Brand Info ---
         doc = await find_one(PromptQuestionsModel, {"_id": ObjectId(prompt_question_id)})
         if not doc:
             raise HTTPException(status_code=404, detail="Prompt questions document not found")
+        
         brand_url = doc.website_url
-        print("brand_url",brand_url)
-        # 🔥 Auto-fetch brand_name from website analysis if not provided
-        if not brand_name:
-            # Try to get brand from chatgpt/gemini website analysis
-            if doc.chatgpt_website_analysis:
-                try:
-                    analysis = json.loads(doc.chatgpt_website_analysis) if isinstance(doc.chatgpt_website_analysis, str) else doc.chatgpt_website_analysis
-                    brand_name = analysis.get("brandName", "") or analysis.get("brand_name", "")
-                except:
-                    pass
-            if not brand_name and doc.gemini_website_analysis:
-                try:
-                    analysis = json.loads(doc.gemini_website_analysis) if isinstance(doc.gemini_website_analysis, str) else doc.gemini_website_analysis
-                    brand_name = analysis.get("brandName", "") or analysis.get("brand_name", "")
-                except:
-                    pass
-            if not brand_name and doc.website_url:
-                # Fallback to domain name
-                brand_name = doc.website_url.replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0]
+        brand_name = ""
+        # Auto-fetch brand_name from website analysis
+        if doc.chatgpt_website_analysis:
+            try:
+                analysis = json.loads(doc.chatgpt_website_analysis) if isinstance(doc.chatgpt_website_analysis, str) else doc.chatgpt_website_analysis
+                brand_name = analysis.get("brandName", "") or analysis.get("brand_name", "")
+            except: pass
+        if not brand_name and doc.gemini_website_analysis:
+            try:
+                analysis = json.loads(doc.gemini_website_analysis) if isinstance(doc.gemini_website_analysis, str) else doc.gemini_website_analysis
+                brand_name = analysis.get("brandName", "") or analysis.get("brand_name", "")
+            except: pass
+        if not brand_name and doc.website_url:
+            brand_name = doc.website_url.replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0]
         
         if not brand_name:
             raise HTTPException(status_code=400, detail="brand_name is required (could not auto-detect)")
-        
-        # 🔥 Auto-discover competitors if not provided
-        niche = ""
-        if not competitors:
-            # Try to get niche from website analysis
-            if doc.chatgpt_website_analysis:
-                try:
-                    analysis = json.loads(doc.chatgpt_website_analysis) if isinstance(doc.chatgpt_website_analysis, str) else doc.chatgpt_website_analysis
-                    niche = analysis.get("niche", "")
-                except:
-                    pass
-            if not niche and doc.gemini_website_analysis:
-                try:
-                    analysis = json.loads(doc.gemini_website_analysis) if isinstance(doc.gemini_website_analysis, str) else doc.gemini_website_analysis
-                    niche = analysis.get("niche", "")
-                except:
-                    pass
-            
-            # 🔥 Use ChatGPT to find competitors based on niche
-            if niche:
-                try:
-                    competitors = await discover_competitors_chatgpt(
-                        brand_name=brand_name,
-                        niche=niche,
-                        nation=doc.nation or 'Global',
-                        state=doc.state or ''
-                    )
-                    if not isinstance(competitors, list):
-                        competitors = []
-                    print(f"🔍 ChatGPT auto-discovered competitors: {competitors}")
-                except Exception as e:
-                    print(f"❌ ChatGPT competitor discovery failed: {e}")
-                    competitors = []
         
         qna_list = doc.qna or []
         total_prompts = len(qna_list)
         
         if total_prompts == 0:
-            return {
-                "total_prompts": 0,
-                "brand_name": brand_name,
-                "message": "No Q&A data found"
-            }
-        
-        # 🔥 Check if any Q&A needs LLM tagging
-        needs_tagging = False
+            return {"total_prompts": 0, "brand_name": brand_name, "message": "No Q&A data found"}
+
+        # --- ✨ Step 2: Dynamically Discover All Competitors from Existing LLM Flags ---
+        all_mentioned_competitors = set()
         for qna in qna_list:
             llm_flags = getattr(qna, 'llm_flags', None)
-            answer = qna.answer or ""
-            if answer and answer != "Not available yet" and not llm_flags:
-                needs_tagging = True
-                break
+            if llm_flags and hasattr(llm_flags, 'competitors_mentioned') and llm_flags.competitors_mentioned:
+                # Ensure it's a list before iterating
+                if isinstance(llm_flags.competitors_mentioned, list):
+                    for competitor_name in llm_flags.competitors_mentioned:
+                        all_mentioned_competitors.add(competitor_name)
         
-        # 🔥 Auto-tag if needed using ChatGPT
-        if needs_tagging:
-            print(f"🔄 Auto-tagging Q&A for brand: {brand_name} using ChatGPT")
-            
-            # Use ChatGPT for tagging all Q&A
-            updated_qna = await tag_all_qna_chatgpt(qna_list, brand_name, competitors)
-            
-            # Save tagged data to DB
-            await update_one(
-                PromptQuestionsModel,
-                {"_id": ObjectId(prompt_question_id)},
-                {"$set": {"qna": updated_qna}}
-            )
-            
-            # Refresh doc with updated data
-            doc = await find_one(PromptQuestionsModel, {"_id": ObjectId(prompt_question_id)})
-            qna_list = doc.qna or []
-        
-        # 🆕 Update capture field based on brand_name in answer (case-insensitive)
-        brand_name_lower = brand_name.lower()
-        capture_updates_needed = False
-        updated_qna_for_capture = []
-        
-        for qna in qna_list:
-            qna_dict = qna.dict() if hasattr(qna, 'dict') else dict(qna)
-            answer = (qna_dict.get("answer") or "").lower()
-            
-            # Check if brand_name exists in answer (case-insensitive)
-            if brand_name_lower in answer:
-                if not qna_dict.get("capture"):
-                    qna_dict["capture"] = True
-                    capture_updates_needed = True
-            updated_qna_for_capture.append(qna_dict)
-        
-        # Save capture updates if any
-        if capture_updates_needed:
-            print(f"✅ Updating capture field for Q&A items with brand mention")
-            await update_one(
-                PromptQuestionsModel,
-                {"_id": ObjectId(prompt_question_id)},
-                {"$set": {"qna": updated_qna_for_capture}}
-            )
-            # Refresh doc
-            doc = await find_one(PromptQuestionsModel, {"_id": ObjectId(prompt_question_id)})
-            qna_list = doc.qna or []
-        
+        competitors = list(all_mentioned_competitors)
+        print(f"✅ Dynamically discovered {len(competitors)} competitors from answer tags: {competitors}")
 
-        # 🆕 Initialize counters for BRAND-AGNOSTIC prompts (real brand discovery)
-        agnostic_total = 0
-        agnostic_mentions = 0
-        agnostic_top_3 = 0
-        agnostic_recommended = 0
-        agnostic_positive_sentiment = 0
-        agnostic_neutral_sentiment = 0
-        agnostic_negative_sentiment = 0
-        agnostic_citations = 0
-        agnostic_citations_expected = 0
+        # --- Step 3: Initialize Counters and Calculate Metrics ---
+        agnostic_total, agnostic_mentions, agnostic_top_3, agnostic_recommended = 0, 0, 0, 0
+        agnostic_positive_sentiment, agnostic_neutral_sentiment, agnostic_negative_sentiment = 0, 0, 0
+        agnostic_citations, agnostic_citations_expected = 0, 0
         agnostic_zero_mention_prompts = []
         
-        # 🆕 Initialize counters for BRAND-INCLUDED prompts (branded queries)
-        included_total = 0
-        included_mentions = 0
-        included_top_3 = 0
-        included_recommended = 0
-        included_positive_sentiment = 0
-        included_neutral_sentiment = 0
-        included_negative_sentiment = 0
-        included_citations = 0
-        included_citations_expected = 0
+        included_total, included_mentions, included_top_3, included_recommended = 0, 0, 0, 0
+        included_positive_sentiment, included_neutral_sentiment, included_negative_sentiment = 0, 0, 0
+        included_citations, included_citations_expected = 0, 0
         included_zero_mention_prompts = []
         
-        # Common trackers
         competitor_mentions = {comp: 0 for comp in competitors}
         brand_features = set()
-        other_brands_recommended = {}  # 🆕 Track all brands recommended in answers (excluding user's brand)
-        using_llm_flags = False
-        
+        other_brands_recommended = {}
+        using_llm_flags = True  # We now operate under the assumption that flags are always used.
+
         for qna in qna_list:
             question = qna.question or ""
             answer = qna.answer or ""
             category_name = qna.category_name
             
-            # 🔥 Use LLM flags if available (10x faster + accurate)
             llm_flags = getattr(qna, 'llm_flags', None)
-            if llm_flags and hasattr(llm_flags, 'brand_mentioned'):
-                using_llm_flags = True
+
+            if not llm_flags or not answer or answer == "Not available yet":
+                continue
+
+            is_brand_in_question = getattr(llm_flags, 'brand_in_question', False)
+            citation_expected = getattr(llm_flags, 'citation_expected', False)
+            
+            if is_brand_in_question:
+                # ===== BRAND-INCLUDED BUCKET =====
+                included_total += 1
+                if citation_expected: included_citations_expected += 1
                 
-                # 🆕 Determine which bucket this Q&A belongs to
-                is_brand_in_question = getattr(llm_flags, 'brand_in_question', False)
-                citation_expected = getattr(llm_flags, 'citation_expected', False)
-                
-                if is_brand_in_question:
-                    # ===== BRAND-INCLUDED BUCKET =====
-                    included_total += 1
-                    if citation_expected:
-                        included_citations_expected += 1
-                    
-                    if llm_flags.brand_mentioned:
-                        included_mentions += 1
-                        
-                        # Top-3 position
-                        if llm_flags.brand_rank and llm_flags.brand_rank <= 3:
-                            included_top_3 += 1
-                        
-                        # First-party citation
-                        if llm_flags.citation_type == "first_party":
-                            included_citations += 1
-                        
-                        # Recommendation
-                        if llm_flags.is_recommended:
-                            included_recommended += 1
-                        
-                        # 🆕 Track all sentiment types
-                        if llm_flags.sentiment in ["positive", "neutral_positive"]:
-                            included_positive_sentiment += 1
-                        elif llm_flags.sentiment == "neutral":
-                            included_neutral_sentiment += 1
-                        elif llm_flags.sentiment == "negative":
-                            included_negative_sentiment += 1
-                        
-                        # Features
-                        if llm_flags.features_mentioned:
-                            brand_features.update(llm_flags.features_mentioned)
-                    else:
-                        included_zero_mention_prompts.append({
-                            "question": question,
-                            "answer_snippet": answer[:200] + "..." if len(answer) > 200 else answer,
-                            "category_name": category_name
-                        })
+                if llm_flags.brand_mentioned:
+                    included_mentions += 1
+                    if llm_flags.brand_rank and llm_flags.brand_rank <= 3: included_top_3 += 1
+                    if llm_flags.citation_type == "first_party": included_citations += 1
+                    if llm_flags.is_recommended: included_recommended += 1
+                    if llm_flags.sentiment in ["positive", "neutral_positive"]: included_positive_sentiment += 1
+                    elif llm_flags.sentiment == "neutral": included_neutral_sentiment += 1
+                    elif llm_flags.sentiment == "negative": included_negative_sentiment += 1
+                    if llm_flags.features_mentioned: brand_features.update(llm_flags.features_mentioned)
                 else:
-                    # ===== BRAND-AGNOSTIC BUCKET (TRUE DISCOVERY) =====
-                    agnostic_total += 1
-                    if citation_expected:
-                        agnostic_citations_expected += 1
-                    
-                    if llm_flags.brand_mentioned:
-                        agnostic_mentions += 1
-                        
-                        # Top-3 position
-                        if llm_flags.brand_rank and llm_flags.brand_rank <= 3:
-                            agnostic_top_3 += 1
-                        
-                        # First-party citation
-                        if llm_flags.citation_type == "first_party":
-                            agnostic_citations += 1
-                        
-                        # Recommendation
-                        if llm_flags.is_recommended:
-                            agnostic_recommended += 1
-                        
-                        # 🆕 Track all sentiment types
-                        if llm_flags.sentiment in ["positive", "neutral_positive"]:
-                            agnostic_positive_sentiment += 1
-                        elif llm_flags.sentiment == "neutral":
-                            agnostic_neutral_sentiment += 1
-                        elif llm_flags.sentiment == "negative":
-                            agnostic_negative_sentiment += 1
-                        
-                        # Features
-                        if llm_flags.features_mentioned:
-                            brand_features.update(llm_flags.features_mentioned)
-                        
-                        # Competitors (only track in agnostic bucket for fair comparison)
-                        if llm_flags.competitors_mentioned:
-                            for comp in llm_flags.competitors_mentioned:
-                                if comp in competitor_mentions:
-                                    competitor_mentions[comp] += 1
-                        
-                        # 🆕 Track all other brands recommended in answers
-                        if hasattr(llm_flags, 'other_brands_recommended') and llm_flags.other_brands_recommended:
-                            for other_brand in llm_flags.other_brands_recommended:
-                                if other_brand and other_brand.strip():
-                                    other_brand_clean = other_brand.strip()
-                                    other_brands_recommended[other_brand_clean] = other_brands_recommended.get(other_brand_clean, 0) + 1
-                    else:
-                        agnostic_zero_mention_prompts.append({
-                            "question": question,
-                            "answer_snippet": answer[:200] + "..." if len(answer) > 200 else answer,
-                            "category_name": category_name
-                        })
+                    included_zero_mention_prompts.append({"question": question, "answer_snippet": answer[:200] + "...", "category_name": category_name})
             else:
-                # 🔹 Fallback: Regex-based detection (slower, less accurate)
-                # Count as agnostic by default when no LLM flags
-                brand_pattern = re.compile(re.escape(brand_name), re.IGNORECASE)
-                
-                # Check if brand is in question
-                brand_in_q = bool(brand_pattern.search(question))
-                
-                if brand_in_q:
-                    included_total += 1
-                    bucket_mentions = included_mentions
+                # ===== BRAND-AGNOSTIC BUCKET (TRUE DISCOVERY) =====
+                agnostic_total += 1
+                if citation_expected: agnostic_citations_expected += 1
+                if llm_flags.competitors_mentioned:
+                    for comp in llm_flags.competitors_mentioned:
+                        if comp in competitor_mentions:
+                            competitor_mentions[comp] += 1
+
+
+                if hasattr(llm_flags, 'other_brands_recommended') and llm_flags.other_brands_recommended:
+                    for other_brand in llm_flags.other_brands_recommended:
+                        other_brand_clean = other_brand.strip()
+                        if other_brand_clean:
+                            other_brands_recommended[other_brand_clean] = other_brands_recommended.get(other_brand_clean, 0) + 1            
+
+                if llm_flags.brand_mentioned:
+                    agnostic_mentions += 1
+                    if llm_flags.brand_rank and llm_flags.brand_rank <= 3: agnostic_top_3 += 1
+                    if llm_flags.citation_type == "first_party": agnostic_citations += 1
+                    if llm_flags.is_recommended: agnostic_recommended += 1
+                    if llm_flags.sentiment in ["positive", "neutral_positive"]: agnostic_positive_sentiment += 1
+                    elif llm_flags.sentiment == "neutral": agnostic_neutral_sentiment += 1
+                    elif llm_flags.sentiment == "negative": agnostic_negative_sentiment += 1
+                    if llm_flags.features_mentioned: brand_features.update(llm_flags.features_mentioned)
+                    
+                    # if llm_flags.competitors_mentioned:
+                    #     for comp in llm_flags.competitors_mentioned:
+                    #         if comp in competitor_mentions:
+                    #             competitor_mentions[comp] += 1
+                    
+                    # if hasattr(llm_flags, 'other_brands_recommended') and llm_flags.other_brands_recommended:
+                    #     for other_brand in llm_flags.other_brands_recommended:
+                    #         other_brand_clean = other_brand.strip()
+                    #         if other_brand_clean:
+                    #             other_brands_recommended[other_brand_clean] = other_brands_recommended.get(other_brand_clean, 0) + 1
                 else:
-                    agnostic_total += 1
-                
-                brand_match = brand_pattern.search(answer)
-                
-                if brand_match:
-                    if brand_in_q:
-                        included_mentions += 1
-                    else:
-                        agnostic_mentions += 1
-                    brand_pos = brand_match.start()
-                    
-                    # Simple heuristic for top-3
-                    lines = [l.strip() for l in answer.split('\n') if l.strip()]
-                    numbered_items = [l for l in lines if re.match(r'^[\d\.\-\*]+', l)]
-                    
-                    is_top_3 = False
-                    if numbered_items:
-                        first_3_items = ' '.join(numbered_items[:3])
-                        if brand_pattern.search(first_3_items):
-                            is_top_3 = True
-                    elif brand_pos < len(answer) * 0.3:
-                        is_top_3 = True
-                    
-                    if is_top_3:
-                        if brand_in_q:
-                            included_top_3 += 1
-                        else:
-                            agnostic_top_3 += 1
-                    
-                    # First-party citation check
-                    if brand_url and brand_url.lower() in answer.lower():
-                        if brand_in_q:
-                            included_citations += 1
-                        else:
-                            agnostic_citations += 1
-                else:
-                    if brand_in_q:
-                        included_zero_mention_prompts.append({
-                            "question": question,
-                            "answer_snippet": answer[:200] + "..." if len(answer) > 200 else answer,
-                            "category_name": category_name
-                        })
-                    else:
-                        agnostic_zero_mention_prompts.append({
-                            "question": question,
-                            "answer_snippet": answer[:200] + "..." if len(answer) > 200 else answer,
-                            "category_name": category_name
-                        })
+                    agnostic_zero_mention_prompts.append({"question": question, "answer_snippet": answer[:200] + "...", "category_name": category_name})
+
+        # --- Step 4: Final Calculations, DB Save, and Response ---
         
-        # 🆕 Calculate SEGMENTED metrics
-        
-        # Brand-Agnostic Metrics (TRUE organic discovery)
+        # Brand-Agnostic Metrics
         agnostic_brand_mention_rate = round((agnostic_mentions / agnostic_total) * 100, 2) if agnostic_total > 0 else 0
         agnostic_top_3_rate = round((agnostic_top_3 / agnostic_mentions) * 100, 2) if agnostic_mentions > 0 else 0
         agnostic_recommendation_rate = round((agnostic_recommended / agnostic_mentions) * 100, 2) if agnostic_mentions > 0 else 0
@@ -613,7 +918,7 @@ async def calculate_geo_metrics_controller(request: Request):
         agnostic_negative_sentiment_rate = round((agnostic_negative_sentiment / agnostic_mentions) * 100, 2) if agnostic_mentions > 0 else 0
         agnostic_citation_rate = round((agnostic_citations / agnostic_citations_expected) * 100, 2) if agnostic_citations_expected > 0 else 0
         
-        # Brand-Included Metrics (branded query performance)
+        # Brand-Included Metrics
         included_brand_mention_rate = round((included_mentions / included_total) * 100, 2) if included_total > 0 else 0
         included_top_3_rate = round((included_top_3 / included_mentions) * 100, 2) if included_mentions > 0 else 0
         included_recommendation_rate = round((included_recommended / included_mentions) * 100, 2) if included_mentions > 0 else 0
@@ -622,55 +927,36 @@ async def calculate_geo_metrics_controller(request: Request):
         included_negative_sentiment_rate = round((included_negative_sentiment / included_mentions) * 100, 2) if included_mentions > 0 else 0
         included_citation_rate = round((included_citations / included_citations_expected) * 100, 2) if included_citations_expected > 0 else 0
         
-        # Combined metrics (for legacy support)
+        # Combined metrics
         total_mentions = agnostic_mentions + included_mentions
         combined_brand_mention_rate = round((total_mentions / total_prompts) * 100, 2) if total_prompts > 0 else 0
         combined_top_3_rate = round(((agnostic_top_3 + included_top_3) / total_mentions) * 100, 2) if total_mentions > 0 else 0
         
-        # Comparison presence (how often brand appears with competitors)
         comparison_presence = 0
         prompts_with_comparison = sum(1 for comp, count in competitor_mentions.items() if count > 0)
         if competitors and agnostic_mentions > 0:
             comparison_presence = round((prompts_with_comparison / len(competitors)) * 100, 2)
-        print("hello12222")
-        
-        print("hello122226666")
-        # 🆕 Save metrics to database
+
+        # Build metrics payload for DB
         metrics_result = {
-    "brand_agnostic_metrics": {
-        "total_prompts": agnostic_total,
-        "mentions": agnostic_mentions,
-        "brand_mention_rate": agnostic_brand_mention_rate,
-        "top_3_mentions": agnostic_top_3,
-        "top_3_position_rate": agnostic_top_3_rate,
-        "recommendation_rate": agnostic_recommendation_rate,
-        "positive_sentiment_rate": agnostic_positive_sentiment_rate,
-        "neutral_sentiment_rate": agnostic_neutral_sentiment_rate,
-        "negative_sentiment_rate": agnostic_negative_sentiment_rate,
-        "citations_expected": agnostic_citations_expected,
-        "first_party_citations": agnostic_citations,
-        "first_party_citation_rate": agnostic_citation_rate,
-        "zero_mention_count": len(agnostic_zero_mention_prompts),
-    },
-    "brand_included_metrics": {
-        "total_prompts": included_total,
-        "mentions": included_mentions,
-        "brand_mention_rate": included_brand_mention_rate,
-        "top_3_mentions": included_top_3,
-        "top_3_position_rate": included_top_3_rate,
-        "recommendation_rate": included_recommendation_rate,
-        "positive_sentiment_rate": included_positive_sentiment_rate,
-        "neutral_sentiment_rate": included_neutral_sentiment_rate,
-        "negative_sentiment_rate": included_negative_sentiment_rate,
-        "citations_expected": included_citations_expected,
-        "first_party_citations": included_citations,
-        "first_party_citation_rate": included_citation_rate,
-        "zero_mention_count": len(included_zero_mention_prompts),
-    }
-}
+            "brand_agnostic_metrics": {
+                "total_prompts": agnostic_total, "mentions": agnostic_mentions, "brand_mention_rate": agnostic_brand_mention_rate,
+                "top_3_mentions": agnostic_top_3, "top_3_position_rate": agnostic_top_3_rate, "recommendation_rate": agnostic_recommendation_rate,
+                "positive_sentiment_rate": agnostic_positive_sentiment_rate, "neutral_sentiment_rate": agnostic_neutral_sentiment_rate, "negative_sentiment_rate": agnostic_negative_sentiment_rate,
+                "citations_expected": agnostic_citations_expected, "first_party_citations": agnostic_citations, "first_party_citation_rate": agnostic_citation_rate,
+                "zero_mention_count": len(agnostic_zero_mention_prompts),
+            },
+            "brand_included_metrics": {
+                "total_prompts": included_total, "mentions": included_mentions, "brand_mention_rate": included_brand_mention_rate,
+                "top_3_mentions": included_top_3, "top_3_position_rate": included_top_3_rate, "recommendation_rate": included_recommendation_rate,
+                "positive_sentiment_rate": included_positive_sentiment_rate, "neutral_sentiment_rate": included_neutral_sentiment_rate, "negative_sentiment_rate": included_negative_sentiment_rate,
+                "citations_expected": included_citations_expected, "first_party_citations": included_citations, "first_party_citation_rate": included_citation_rate,
+                "zero_mention_count": len(included_zero_mention_prompts),
+            }
+        }
 
         try:
-            # 🆕 ALWAYS create new metrics document on every recalculate
+            # ALWAYS create a new metrics document on every recalculation
             new_metrics = GeoMetricsModel(
                 prompt_question_id=ObjectId(prompt_question_id),
                 brand_name=brand_name,
@@ -693,77 +979,43 @@ async def calculate_geo_metrics_controller(request: Request):
             import traceback
             print(traceback.format_exc())
             print(f"⚠️ Failed to save metrics to DB: {save_error}")
-            # Continue and return metrics even if save fails
         
         return {
             "brand_name": brand_name,
             "total_prompts": total_prompts,
             "using_llm_flags": using_llm_flags,
-            
-            # 🆕 SEGMENTED METRICS - Brand Agnostic (TRUE discovery metrics)
             "brand_agnostic_metrics": {
                 "description": "Metrics from prompts WITHOUT brand name - shows real organic discovery",
-                "total_prompts": agnostic_total,
-                "mentions": agnostic_mentions,
-                "brand_mention_rate": agnostic_brand_mention_rate,
-                "top_3_mentions": agnostic_top_3,
-                "top_3_position_rate": agnostic_top_3_rate,
-                "recommendation_rate": agnostic_recommendation_rate,
-                "positive_sentiment_rate": agnostic_positive_sentiment_rate,
-                "neutral_sentiment_rate": agnostic_neutral_sentiment_rate,
-                "negative_sentiment_rate": agnostic_negative_sentiment_rate,
-                "citations_expected": agnostic_citations_expected,
-                "first_party_citations": agnostic_citations,
-                "first_party_citation_rate": agnostic_citation_rate,
-                "zero_mention_count": len(agnostic_zero_mention_prompts),
-                "zero_mention_prompts": agnostic_zero_mention_prompts
+                "total_prompts": agnostic_total, "mentions": agnostic_mentions, "brand_mention_rate": agnostic_brand_mention_rate,
+                "top_3_mentions": agnostic_top_3, "top_3_position_rate": agnostic_top_3_rate, "recommendation_rate": agnostic_recommendation_rate,
+                "positive_sentiment_rate": agnostic_positive_sentiment_rate, "neutral_sentiment_rate": agnostic_neutral_sentiment_rate, "negative_sentiment_rate": agnostic_negative_sentiment_rate,
+                "citations_expected": agnostic_citations_expected, "first_party_citations": agnostic_citations, "first_party_citation_rate": agnostic_citation_rate,
+                "zero_mention_count": len(agnostic_zero_mention_prompts), "zero_mention_prompts": agnostic_zero_mention_prompts
             },
-            
-            # 🆕 SEGMENTED METRICS - Brand Included (branded query metrics)
             "brand_included_metrics": {
                 "description": "Metrics from prompts WITH brand name - shows branded query performance",
-                "total_prompts": included_total,
-                "mentions": included_mentions,
-                "brand_mention_rate": included_brand_mention_rate,
-                "top_3_mentions": included_top_3,
-                "top_3_position_rate": included_top_3_rate,
-                "recommendation_rate": included_recommendation_rate,
-                "positive_sentiment_rate": included_positive_sentiment_rate,
-                "neutral_sentiment_rate": included_neutral_sentiment_rate,
-                "negative_sentiment_rate": included_negative_sentiment_rate,
-                "citations_expected": included_citations_expected,
-                "first_party_citations": included_citations,
-                "first_party_citation_rate": included_citation_rate,
-                "zero_mention_count": len(included_zero_mention_prompts),
-                "zero_mention_prompts": included_zero_mention_prompts
+                "total_prompts": included_total, "mentions": included_mentions, "brand_mention_rate": included_brand_mention_rate,
+                "top_3_mentions": included_top_3, "top_3_position_rate": included_top_3_rate, "recommendation_rate": included_recommendation_rate,
+                "positive_sentiment_rate": included_positive_sentiment_rate, "neutral_sentiment_rate": included_neutral_sentiment_rate, "negative_sentiment_rate": included_negative_sentiment_rate,
+                "citations_expected": included_citations_expected, "first_party_citations": included_citations, "first_party_citation_rate": included_citation_rate,
+                "zero_mention_count": len(included_zero_mention_prompts), "zero_mention_prompts": included_zero_mention_prompts
             },
-            
-            # Combined (legacy support + overall view)
             "total_mentions": total_mentions,
             "brand_mention_rate": combined_brand_mention_rate,
             "top_3_mentions": agnostic_top_3 + included_top_3,
             "top_3_position_rate": combined_top_3_rate,
             "zero_mention_count": len(agnostic_zero_mention_prompts) + len(included_zero_mention_prompts),
-            
-            # Competitive Metrics (from agnostic bucket only for fair comparison)
-            # 🆕 Only include competitors that were actually mentioned in answers
             "competitor_mentions": {comp: count for comp, count in competitor_mentions.items() if count > 0},
             "comparison_presence": comparison_presence,
             "brand_features": list(brand_features),
-            # 🆕 All other brands/competitors recommended in answers (sorted by frequency)
             "other_brands_recommended": dict(sorted(other_brands_recommended.items(), key=lambda x: x[1], reverse=True)),
-            "createdAt": datetime.utcnow().isoformat()  # 🆕 Return timestamp for frontend
+            "createdAt": datetime.utcnow().isoformat()
         }
         
-    except HTTPException as e:
-        import traceback
-        print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))  
     except Exception as e:
         import traceback
         print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))      
-
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 
