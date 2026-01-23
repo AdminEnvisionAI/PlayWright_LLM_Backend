@@ -7,11 +7,13 @@ from models.website_analysis import (
     WebsiteAnalysis,
     WebsiteAnalysisResponse,
     Question,
-    AskChatGPTRequest
+    AskChatGPTRequest,
+    AskGeminiRequest
 )
 # All endpoints now use ChatGPT controller instead of Gemini
 from controllers.chatgpt_controller import (
     ask_chatgpt, 
+    ask_gemini,
     analyze_website_chatgpt, 
     generate_questions_chatgpt,
     ask_chatgpt_with_location
@@ -73,6 +75,15 @@ async def ask_chatgpt_endpoint(request: AskChatGPTRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+@router.post("/ask-gemini", response_model=AskResponse)
+async def ask_gemini_endpoint(request: AskGeminiRequest):
+    try:
+        answer = await ask_gemini(request.question,request.prompt_questions_id,request.category_id,request.uuid)
+        return AskResponse(answer=answer,prompt_questions_id=request.prompt_questions_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 

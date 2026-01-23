@@ -73,3 +73,10 @@ class AskChatGPTRequest(BaseModel):
     prompt_questions_id: str
     category_id: str
     uuid: Optional[str]=None
+
+
+class AskGeminiRequest(BaseModel):
+    question: str
+    prompt_questions_id: str
+    category_id: str
+    uuid: Optional[str]=None

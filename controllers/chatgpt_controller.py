@@ -97,6 +97,132 @@ async def handle_welcome_popup(page):
     except Exception:
         print("'Stay logged out' popup not found, continuing normally.")
 
+
+async def run_gemini_session(question: str, headless: bool, is_retry: bool = False) -> str:
+    """
+    Runs an automated session with Google Gemini using Playwright.
+    Selectors have been updated to handle complex responses with tables and citations.
+    """
+    context = None
+    try:
+        async with async_playwright() as p:
+            user_agent = random.choice(USER_AGENTS)
+            
+            mode_text = "headless" if headless else "visible browser"
+            print(f"Starting {mode_text} mode...")
+            
+            browser_args = [
+                "--disable-blink-features=AutomationControlled", "--window-size=1920,1080",
+                "--start-maximized", "--disable-dev-shm-usage", "--no-first-run",
+                "--no-default-browser-check", "--disable-infobars",
+                "--ignore-certificate-errors", "--lang=en-US",
+            ]
+            
+            if headless:
+                browser_args.append("--headless=new")
+            
+            context = await p.chromium.launch_persistent_context(
+                USER_DATA_DIR, headless=headless, viewport={"width": 1920, "height": 1080},
+                user_agent=user_agent, locale="en-US", timezone_id="America/New_York",
+                args=browser_args, ignore_https_errors=True
+            )
+
+            page = context.pages[0] if context.pages else await context.new_page()
+            
+            # await Stealth().apply_stealth_async(page)
+            if headless: await load_cookies(context)
+
+            print("Opening Google Gemini...")
+            await page.goto("https://gemini.google.com/app", wait_until="domcontentloaded")
+            
+            await human_delay(3000, 5000)
+            
+            if not headless:
+                print("Please solve any captcha/login manually in the browser window...")
+                print("Waiting for input box (timeout: 120s)...")
+            
+            # Selector for the input area remains the same
+            input_selector = 'div.ql-editor[role="textbox"]'
+            await page.wait_for_selector(input_selector, timeout=120000)
+            await page.click(input_selector)
+            
+            if not headless:
+                await save_cookies(context)
+                print("Cookies saved! Next requests will use headless mode.")
+            
+            await human_delay(1000, 2000)
+            
+            print(f"Typing question: {question[:50]}...")
+            await human_type(page, input_selector, question)
+            
+            await human_delay(500, 1000)
+            
+            send_button_selector = 'button[aria-label="Send message"]'
+            await page.click(send_button_selector)
+
+            print("Waiting for response...")
+            response_text = ""
+            last_len = 0
+            stable_count = 0
+            max_wait_seconds = 120
+            elapsed_seconds = 0
+
+            while stable_count < 3 and elapsed_seconds < max_wait_seconds:
+                await asyncio.sleep(2)
+                elapsed_seconds += 2
+
+                # UPDATED: More robust selector for the latest message container
+                last_message_selector = 'message-content'
+                all_messages = await page.query_selector_all(last_message_selector)
+
+                if all_messages:
+                    last_message_handle = all_messages[-1]
+                    
+                    # UPDATED: Use JavaScript evaluation to get clean text, removing citations and footers
+                    current_text = await last_message_handle.evaluate('''
+                        (element) => {
+                            const clone = element.cloneNode(true);
+                            // Elements to remove for clean text extraction
+                            const selectorsToRemove = [
+                                'source-footnote',
+                                'sources-carousel-inline',
+                                '.table-footer',
+                                'button[aria-label^="View source details"]'
+                            ];
+                            selectorsToRemove.forEach(selector => {
+                                clone.querySelectorAll(selector).forEach(el => el.remove());
+                            });
+                            return clone.innerText;
+                        }
+                    ''')
+                    
+                    response_text = current_text.strip()
+                    
+                    if len(response_text) == last_len and len(response_text) > 10:
+                        stable_count += 1
+                    else:
+                        stable_count = 0
+                    
+                    last_len = len(response_text)
+                    print(f"...generating ({len(response_text)} chars, stability: {stable_count}/3)...")
+
+            if not response_text:
+                return "No response captured. Gemini may require login or selectors have changed."
+
+            await save_cookies(context)
+            print("Response captured successfully!")
+            return response_text
+
+    except Exception as e:
+        print(traceback.format_exc())
+        return f"Error in run_gemini_session: {str(e)}"
+
+    finally:
+        if context:
+            try:
+                await context.close()
+            except Exception as e:
+                print(f"Error closing context: {e}")
 async def run_chatgpt_session(question: str, headless: bool, is_retry: bool = False) -> str:
     context = None
     try:
@@ -336,62 +462,144 @@ async def analyze_website_chatgpt(domain: str, nation: str, state: str, query_co
 from models.website_analysis import Question
 
 
+# def extract_json(text: str):
+#     """Extract JSON from text that may contain markdown code blocks or extra text"""
+#     if not text or not text.strip():
+#         print(f"⚠️ extract_json received empty text")
+#         raise ValueError("Empty text provided to extract_json")
+    
+#     original_text = text
+#     text = text.strip()
+    
+#     # Debug: Show first 200 chars of response
+#     print(f"📝 Parsing response ({len(text)} chars): {text[:200]}...")
+    
+#     # Strategy 1: Check for markdown code blocks
+#     json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
+#     if json_match:
+#         text = json_match.group(1).strip()
+#         print(f"📝 Found markdown code block, extracted: {text[:100]}...")
+    
+#     # Strategy 2: Direct JSON parse if starts with [ or {
+#     if text.startswith('[') or text.startswith('{'):
+#         try:
+#             return json.loads(text)
+#         except json.JSONDecodeError as e:
+#             print(f"⚠️ Direct JSON parse failed: {e}")
+    
+#     # Strategy 3: Find JSON array pattern
+#     array_match = re.search(r'\[\s*\{[\s\S]*\}\s*\]', text)
+#     if array_match:
+#         try:
+#             return json.loads(array_match.group())
+#         except json.JSONDecodeError as e:
+#             print(f"⚠️ Array pattern parse failed: {e}")
+    
+#     # Strategy 4: Find any JSON object or array
+#     json_pattern = r'[\[\{][\s\S]*[\]\}]'
+#     match = re.search(json_pattern, text)
+#     if match:
+#         try:
+#             return json.loads(match.group())
+#         except json.JSONDecodeError as e:
+#             print(f"⚠️ Generic JSON pattern parse failed: {e}")
+    
+#     # Strategy 5: Try to find individual JSON objects and build array
+#     objects = re.findall(r'\{[^{}]*\}', text)
+#     if objects:
+#         try:
+#             parsed_objects = [json.loads(obj) for obj in objects]
+#             print(f"📝 Built array from {len(parsed_objects)} individual objects")
+#             return parsed_objects
+#         except json.JSONDecodeError as e:
+#             print(f"⚠️ Individual objects parse failed: {e}")
+    
+#     # Last resort: try the whole text
+#     print(f"⚠️ All JSON extraction strategies failed, trying raw text...")
+#     return json.loads(text)
+
+
+
+
+
 def extract_json(text: str):
-    """Extract JSON from text that may contain markdown code blocks or extra text"""
+    """
+    ✅ UPGRADED: Extracts and CLEANS JSON from text.
+    It finds the JSON block and fixes common LLM errors like single quotes
+    and trailing commas before parsing.
+    """
     if not text or not text.strip():
-        print(f"⚠️ extract_json received empty text")
+        print("⚠️ extract_json received empty text")
         raise ValueError("Empty text provided to extract_json")
     
     original_text = text
     text = text.strip()
     
-    # Debug: Show first 200 chars of response
     print(f"📝 Parsing response ({len(text)} chars): {text[:200]}...")
     
-    # Strategy 1: Check for markdown code blocks
-    json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
-    if json_match:
-        text = json_match.group(1).strip()
-        print(f"📝 Found markdown code block, extracted: {text[:100]}...")
-    
-    # Strategy 2: Direct JSON parse if starts with [ or {
-    if text.startswith('[') or text.startswith('{'):
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError as e:
-            print(f"⚠️ Direct JSON parse failed: {e}")
-    
-    # Strategy 3: Find JSON array pattern
-    array_match = re.search(r'\[\s*\{[\s\S]*\}\s*\]', text)
-    if array_match:
-        try:
-            return json.loads(array_match.group())
-        except json.JSONDecodeError as e:
-            print(f"⚠️ Array pattern parse failed: {e}")
-    
-    # Strategy 4: Find any JSON object or array
-    json_pattern = r'[\[\{][\s\S]*[\]\}]'
-    match = re.search(json_pattern, text)
-    if match:
-        try:
-            return json.loads(match.group())
-        except json.JSONDecodeError as e:
-            print(f"⚠️ Generic JSON pattern parse failed: {e}")
-    
-    # Strategy 5: Try to find individual JSON objects and build array
-    objects = re.findall(r'\{[^{}]*\}', text)
-    if objects:
-        try:
-            parsed_objects = [json.loads(obj) for obj in objects]
-            print(f"📝 Built array from {len(parsed_objects)} individual objects")
-            return parsed_objects
-        except json.JSONDecodeError as e:
-            print(f"⚠️ Individual objects parse failed: {e}")
-    
-    # Last resort: try the whole text
-    print(f"⚠️ All JSON extraction strategies failed, trying raw text...")
-    return json.loads(text)
+    json_str_to_parse = None
 
+    # --- Step 1: Find the most likely JSON string using your strategies ---
+
+    # Strategy 1: Find markdown code blocks (most reliable)
+    json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text, re.DOTALL)
+    if json_match:
+        json_str_to_parse = json_match.group(1).strip()
+        print("📝 Found markdown code block.")
+    else:
+        # Strategy 2: Find the largest possible JSON-like block
+        # This is more reliable than just checking the start/end
+        start_index = text.find('{')
+        if start_index == -1:
+            start_index = text.find('[')
+        
+        end_index = text.rfind('}')
+        if end_index == -1:
+            end_index = text.rfind(']')
+
+        if start_index != -1 and end_index != -1 and end_index > start_index:
+            json_str_to_parse = text[start_index : end_index + 1]
+            print("📝 Found JSON-like block from start/end braces.")
+        else:
+            # If no JSON structure is found at all, we can't proceed
+            print("⚠️ All strategies to find a JSON block failed.")
+            raise ValueError("Could not find any JSON-like structure in the response text.")
+
+    # --- Step 2: Clean and fix the extracted JSON string ---
+    
+    print(f"🔧 Cleaning extracted string: {json_str_to_parse[:200]}...")
+    
+    cleaned_str = json_str_to_parse
+    
+    # Fix 1: Replace single quotes with double quotes (very common issue)
+    # This regex is safer than a simple replace as it avoids apostrophes in words.
+    # It looks for a single quote but not if it's preceded by a backslash (escaped).
+    cleaned_str = re.sub(r"(?<!\\)'", '"', cleaned_str)
+
+    # Fix 2: Remove trailing commas before a closing brace } or bracket ]
+    cleaned_str = re.sub(r',\s*([\}\]])', r'\1', cleaned_str)
+
+    # Fix 3: Remove problematic newlines within the string
+    cleaned_str = cleaned_str.replace('\n', ' ').replace('\r', '')
+
+    # --- Step 3: Parse the cleaned string ---
+
+    try:
+        print("✅ Attempting to parse the cleaned JSON...")
+        return json.loads(cleaned_str)
+    except json.JSONDecodeError as e:
+        # This will now only happen if the JSON is fundamentally broken in a way
+        # that the cleaning logic couldn't fix.
+        print(f"❌ FINAL PARSE FAILED even after cleaning: {e}")
+        print("--- Original Text Snippet ---")
+        print(original_text[:500])
+        print("--- Extracted String Before Cleaning ---")
+        print(json_str_to_parse)
+        print("--- Cleaned String That Failed ---")
+        print(cleaned_str)
+        print("--- End of Debug Info ---")
+        # Re-raise the exception because if we can't parse it here, it's unrecoverable
+        raise e
 
 
 
@@ -693,6 +901,339 @@ async def generate_questions_chatgpt(
 
 
 
+
+# In controllers/chatgpt_controller.py
+
+
+# In controllers/chatgpt_controller.py
+
+async def _tag_single_qna_with_brand_url(question: str, answer: str, brand_name: str, brand_url: str, llm: str) -> dict | None: # 🆕 Added brand_url
+    """
+    ✅ OPTIMIZED: Tags a single Q&A pair with high accuracy.
+    Returns the llm_flags dictionary or None on failure.
+    """
+    print(f"✅ Tagging single answer for brand '{brand_name}'...")
+    
+    # Clean the brand URL for more reliable matching
+    clean_brand_url = brand_url.replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0]
+
+    # Truncate long answers to avoid token limits
+    if len(answer) > 7000:
+        answer = answer[:7000] + "..."
+
+    # 🚀 The prompt is now much stricter and more detailed to prevent errors.
+    prompt = f"""You are a meticulous data analyst. Your only job is to extract data into a precise JSON format. RESPOND WITH ONLY A JSON OBJECT. NO EXPLANATIONS.
+
+Analyze the following Q&A item for the brand "{brand_name}":
+
+--- Q&A ---
+Question: {question}
+Answer: {answer}
+--- END ---
+
+Return a SINGLE JSON object with these exact fields:
+- "brand_in_question": boolean. Is "{brand_name}" mentioned BY NAME in the Question?
+- "brand_mentioned": boolean. Is "{brand_name}" mentioned BY NAME in the Answer?
+- "brand_rank": number or null. Position where "{brand_name}" appears (1=first, 2=second). MUST be null if brand_mentioned is false.
+- "is_recommended": boolean. Is "{brand_name}" positively recommended in the Answer? MUST be false if brand_mentioned is false.
+- "sentiment": string. MUST be "positive", "neutral", or "negative" towards "{brand_name}". If brand_mentioned is false, this MUST be "neutral".
+- "citation_type": string. MUST be "first_party" ONLY if a URL containing "{clean_brand_url}" is in the Answer. MUST be "third_party" if ANY OTHER URL is present. Otherwise, it MUST be "none".
+- "citation_expected": boolean. Is the question phrased in a way that expects a citation or link in the answer (e.g., asking "where can I find...")?
+- "features_mentioned": string array. List ONLY features explicitly associated with "{brand_name}" in the Answer. If none are mentioned for the brand, return an empty array [].
+- "competitors_mentioned": string array. EXTRACT the names of any competing companies or products DIRECTLY FROM THE ANSWER TEXT. Do not invent or infer competitors. If none are mentioned, return an empty array [].
+- "all_other_brands_mentioned": string array. List ALL other brand/company names found in the Answer, excluding "{brand_name}". This list might include competitors or other mentioned tools.
+
+START YOUR RESPONSE WITH {{ AND END WITH }}. NOTHING ELSE."""
+
+    try:
+        result = None
+        async with SESSION_LOCK:
+            if llm == "chatgpt":
+                result = await run_chatgpt_session(prompt, headless=True)
+            elif llm == "gemini":
+                # Assuming you have a run_gemini_session function
+                result = await run_gemini_session(prompt, headless=True)
+            
+            if result == "CAPTCHA_RETRY":
+                if llm == "chatgpt":
+                    result = await run_chatgpt_session(prompt, headless=True, is_retry=True)
+                elif llm == "gemini":
+                    result = await run_gemini_session(prompt, headless=True, is_retry=True)
+        
+        if not result or result.startswith("Error"):
+            print(f"⚠️ Single tagging failed: LLM returned no valid response.")
+            return None
+        
+        flags_data = extract_json(result)
+        
+        if not isinstance(flags_data, dict):
+            print(f"⚠️ Single tagging failed: Did not return a dictionary.")
+            return None
+
+        # Sanitize and create the final object
+        llm_flags = {
+            "brand_in_question": bool(flags_data.get("brand_in_question", False)),
+            "brand_mentioned": bool(flags_data.get("brand_mentioned", False)),
+            "brand_rank": flags_data.get("brand_rank"),
+            "is_recommended": bool(flags_data.get("is_recommended", False)),
+            "sentiment": flags_data.get("sentiment", "neutral"),
+            "citation_type": flags_data.get("citation_type", "none"),
+            "citation_expected": bool(flags_data.get("citation_expected", False)),
+            "features_mentioned": flags_data.get("features_mentioned", []),
+            "competitors_mentioned": flags_data.get("competitors_mentioned", []),
+            # 🆕 Renamed for clarity to match the prompt
+            "other_brands_recommended": flags_data.get("all_other_brands_mentioned", []) 
+        }
+        print("✅ Single answer tagged successfully.")
+        return llm_flags
+
+    except Exception as e:
+        print(f"❌ Error during single tagging: {e}")
+        return None
+
+async def _tag_single_qna(question: str, answer: str, brand_name: str, llm: str) -> dict | None:
+    """
+    Tags a single Q&A pair with semantic flags using ChatGPT.
+    Returns the llm_flags dictionary or None on failure.
+    """
+    print(f"✅ Tagging single answer for brand '{brand_name}'...")
+    
+    # Truncate long answers to avoid token limits
+    if len(answer) > 7000:
+        answer = answer[:7000] + "..."
+
+    # The prompt is now for a SINGLE item and expects a SINGLE JSON object
+    prompt = f"""You are a precise JSON data extraction engine. RESPOND WITH ONLY A JSON OBJECT. NO EXPLANATIONS. NO MARKDOWN.
+
+Analyze the following Q&A item for the brand "{brand_name}":
+
+--- Q&A ---
+Question: {question}
+Answer: {answer}
+--- END ---
+
+Return a SINGLE JSON object with these exact fields:
+- "brand_in_question": boolean (is "{brand_name}" in the Question?)
+- "brand_mentioned": boolean (is "{brand_name}" in the Answer?)
+- "brand_rank": number or null (1 if first, 2 if second, etc., null if not mentioned)
+- "is_recommended": boolean (is "{brand_name}" positively recommended?)
+- "sentiment": string ("positive", "neutral", or "negative")
+- "citation_type": string ("first_party", "third_party", or "none")
+- "citation_expected": boolean
+- "features_mentioned": string array
+- "competitors_mentioned": string array (EXTRACT any competitor brands from the Answer. Do NOT include "{brand_name}".)
+- "other_brands_recommended": string array
+
+START YOUR RESPONSE WITH {{ AND END WITH }}. NOTHING ELSE."""
+
+    try:
+        async with SESSION_LOCK:
+            if llm == "chatgpt":
+                result = await run_chatgpt_session(prompt, headless=True)
+            elif llm == "gemini":
+                result = await run_gemini_session(prompt, headless=True)
+            if result == "CAPTCHA_RETRY":
+                if llm == "chatgpt":
+                    result = await run_chatgpt_session(prompt, headless=True, is_retry=True)
+                elif llm == "gemini":
+                    result = await run_gemini_session(prompt, headless=True, is_retry=True)
+        
+        if not result or result.startswith("Error"):
+            print(f"⚠️ Single tagging failed: ChatGPT returned no valid response.")
+            return None
+        
+        flags_data = extract_json(result)
+        
+        if not isinstance(flags_data, dict):
+            print(f"⚠️ Single tagging failed: Did not return a dictionary.")
+            return None
+
+        # Sanitize and create the final object
+        llm_flags = {
+            "brand_in_question": bool(flags_data.get("brand_in_question", False)),
+            "brand_mentioned": bool(flags_data.get("brand_mentioned", False)),
+            "brand_rank": flags_data.get("brand_rank"),
+            "is_recommended": bool(flags_data.get("is_recommended", False)),
+            "sentiment": flags_data.get("sentiment", "neutral"),
+            "citation_type": flags_data.get("citation_type", "none"),
+            "citation_expected": bool(flags_data.get("citation_expected", False)),
+            "features_mentioned": flags_data.get("features_mentioned", []),
+            "competitors_mentioned": flags_data.get("competitors_mentioned", []),
+            "other_brands_recommended": flags_data.get("other_brands_recommended", [])
+        }
+        print("✅ Single answer tagged successfully.")
+        return llm_flags
+
+    except Exception as e:
+        print(f"❌ Error during single tagging: {e}")
+        return None
+
+
+
+
+
+
+
+
+
+async def ask_chatgpt(question: str, prompt_questions_id: str, category_id: str, qna_uuid: Optional[str] = None) -> str:
+    # --- Step 1: Get the document to find the brand_name ---
+    doc = await find_one(PromptQuestionsModel, {"_id": ObjectId(prompt_questions_id)})
+    if not doc:
+        return "Error: Project document not found."
+
+    brand_name = ""
+    brand_url = ""
+    # Logic to extract brand_name (you can reuse this from your metrics controller)
+    if doc.chatgpt_website_analysis:
+        try:
+            analysis = json.loads(doc.chatgpt_website_analysis) if isinstance(doc.chatgpt_website_analysis, str) else doc.chatgpt_website_analysis
+            brand_name = analysis.get("brandName", "")
+            brand_url = doc.website_url
+        except: pass
+    if not brand_name and doc.website_url:
+        brand_name = doc.website_url.replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0]
+    
+    if not brand_name:
+        return "Error: Brand name could not be determined for tagging."
+
+    # --- Step 2: Generate the answer from ChatGPT ---
+    generated_answer = ""
+    async with SESSION_LOCK:
+        has_cookies = cookies_exist()
+        print("Generating answer...")
+        if has_cookies:
+            generated_answer = await run_chatgpt_session(question, headless=True)
+        else:
+            generated_answer = await run_chatgpt_session(question, headless=True)
+        
+        if generated_answer == "CAPTCHA_RETRY":
+            print("Retrying answer generation...")
+            generated_answer = await run_chatgpt_session(question, headless=True, is_retry=True)
+
+    # If answer generation failed, stop here
+    if not generated_answer or generated_answer.startswith("Error") or generated_answer == "CAPTCHA_RETRY":
+        return "Failed to get a response from ChatGPT."
+
+    # --- Step 3: Tag the generated answer immediately ---
+    # generated_flags = await _tag_single_qna(question, generated_answer, brand_name, "chatgpt")
+    generated_flags = await _tag_single_qna_with_brand_url(question, generated_answer, brand_name, brand_url, "chatgpt")
+
+    # --- Step 4: Save everything to the database in one operation ---
+    if qna_uuid:
+        # Update an existing Q&A
+        print(f"Updating Q&A (UUID: {qna_uuid}) with new answer and tags...")
+        await update_one(
+            PromptQuestionsModel,
+            {"_id": ObjectId(prompt_questions_id)},
+            {
+                "$set": {
+                    "qna.$[item].answer": generated_answer,
+                    "qna.$[item].question": question,
+                    "qna.$[item].llm_flags": generated_flags  # 🆕 Add flags here
+                }
+            },
+            array_filters=[{"item.uuid": qna_uuid}]
+        )   
+    else:
+        # Add a new Q&A
+        print("Adding new Q&A with answer and tags...")
+        new_qna_item = {
+            "question": question,
+            "answer": generated_answer,
+            "category_id": ObjectId(category_id),
+            "uuid": str(uuid.uuid4()),
+            "llm_flags": generated_flags  # 🆕 Add flags here
+        }
+        await update_one(
+            PromptQuestionsModel,
+            {"_id": ObjectId(prompt_questions_id)},
+            {"$push": {"qna": new_qna_item}}
+        )
+
+    return generated_answer
+
+
+
+async def ask_gemini(question: str, prompt_questions_id: str, category_id: str, qna_uuid: Optional[str] = None) -> str:
+    # --- Step 1: Get the document to find the brand_name ---
+    doc = await find_one(PromptQuestionsModel, {"_id": ObjectId(prompt_questions_id)})
+    if not doc:
+        return "Error: Project document not found."
+
+    brand_name = ""
+    brand_url = ""
+    # Logic to extract brand_name (you can reuse this from your metrics controller)
+    if doc.chatgpt_website_analysis:
+        try:
+            analysis = json.loads(doc.chatgpt_website_analysis) if isinstance(doc.chatgpt_website_analysis, str) else doc.chatgpt_website_analysis
+            brand_name = analysis.get("brandName", "")
+            brand_url = doc.website_url
+        except: pass
+    if not brand_name and doc.website_url:
+        brand_name = doc.website_url.replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0]
+    
+    if not brand_name:
+        return "Error: Brand name could not be determined for tagging."
+
+    # --- Step 2: Generate the answer from ChatGPT ---
+    generated_answer = ""
+    async with SESSION_LOCK:
+        has_cookies = cookies_exist()
+        print("Generating answer...")
+        if has_cookies:
+            generated_answer = await run_gemini_session(question, headless=True)
+        else:
+            generated_answer = await run_gemini_session(question, headless=True)
+        
+        if generated_answer == "CAPTCHA_RETRY":
+            print("Retrying answer generation...")
+            generated_answer = await run_gemini_session(question, headless=True, is_retry=True)
+
+    # If answer generation failed, stop here
+    if not generated_answer or generated_answer.startswith("Error") or generated_answer == "CAPTCHA_RETRY":
+        return "Failed to get a response from ChatGPT."
+
+    # --- Step 3: Tag the generated answer immediately ---
+    # generated_flags = await _tag_single_qna(question, generated_answer, brand_name, "gemini")
+    generated_flags = await _tag_single_qna_with_brand_url(question, generated_answer, brand_name, brand_url, "gemini")
+
+    # --- Step 4: Save everything to the database in one operation ---
+    if qna_uuid:
+        # Update an existing Q&A
+        print(f"Updating Q&A (UUID: {qna_uuid}) with new answer and tags...")
+        await update_one(
+            PromptQuestionsModel,
+            {"_id": ObjectId(prompt_questions_id)},
+            {
+                "$set": {
+                    "qna.$[item].answer": generated_answer,
+                    "qna.$[item].question": question,
+                    "qna.$[item].llm_flags": generated_flags  # 🆕 Add flags here
+                }
+            },
+            array_filters=[{"item.uuid": qna_uuid}]
+        )   
+    else:
+        # Add a new Q&A
+        print("Adding new Q&A with answer and tags...")
+        new_qna_item = {
+            "question": question,
+            "answer": generated_answer,
+            "category_id": ObjectId(category_id),
+            "uuid": str(uuid.uuid4()),
+            "llm_flags": generated_flags  # 🆕 Add flags here
+        }
+        await update_one(
+            PromptQuestionsModel,
+            {"_id": ObjectId(prompt_questions_id)},
+            {"$push": {"qna": new_qna_item}}
+        )
+
+    return generated_answer
+
+
+
 async def ask_chatgpt_with_location(question: str, nation: str, state: str) -> str:
     """
     Ask ChatGPT with location context (replacement for ask_gemini)
@@ -714,55 +1255,55 @@ async def ask_chatgpt_with_location(question: str, nation: str, state: str) -> s
     return result if result else "No response from ChatGPT."
 
 
-async def ask_chatgpt(question: str,prompt_questions_id: str,category_id: str,qna_uuid: Optional[str]=None) -> str:
-    async with SESSION_LOCK:
-        has_cookies = cookies_exist()
+# async def ask_chatgpt(question: str,prompt_questions_id: str,category_id: str,qna_uuid: Optional[str]=None) -> str:
+#     async with SESSION_LOCK:
+#         has_cookies = cookies_exist()
         
-        if has_cookies:
-            print("Cookies found! Starting headless mode...")
-            # Set headless to True if cookies exist
-            result = await run_chatgpt_session(question, headless=True)
-        else:
-            print("No cookies found. Starting in visible mode for initial setup/login...")
-            # Set headless to False if no cookies exist
-            result = await run_chatgpt_session(question, headless=True)
+#         if has_cookies:
+#             print("Cookies found! Starting headless mode...")
+#             # Set headless to True if cookies exist
+#             result = await run_chatgpt_session(question, headless=True)
+#         else:
+#             print("No cookies found. Starting in visible mode for initial setup/login...")
+#             # Set headless to False if no cookies exist
+#             result = await run_chatgpt_session(question, headless=True)
         
-        if result == "CAPTCHA_RETRY":
-            print("Cloudflare challenge failed. Retrying once in visible mode...")
-            result = await run_chatgpt_session(question, headless=True, is_retry=True)
-        if qna_uuid:
-            await update_one(
-    PromptQuestionsModel,
-    {"_id": ObjectId(prompt_questions_id)},
-    {
-        "$set": {
-            "qna.$[item].answer": result,
-            "qna.$[item].question": question
-        }
-    },
-    array_filters=[
-        {"item.uuid": qna_uuid}
-    ]
-)   
-        else:
-            await update_one(
-    PromptQuestionsModel,
-    {"_id": ObjectId(prompt_questions_id)},
-    {
-        "$push": {
-            "qna": {
-                "question": question,
-                "answer": result,
-                "category_id": ObjectId(category_id),
-                "uuid": str(uuid.uuid4())
-            }
-        }
-    }
-)
+#         if result == "CAPTCHA_RETRY":
+#             print("Cloudflare challenge failed. Retrying once in visible mode...")
+#             result = await run_chatgpt_session(question, headless=True, is_retry=True)
+#         if qna_uuid:
+#             await update_one(
+#     PromptQuestionsModel,
+#     {"_id": ObjectId(prompt_questions_id)},
+#     {
+#         "$set": {
+#             "qna.$[item].answer": result,
+#             "qna.$[item].question": question
+#         }
+#     },
+#     array_filters=[
+#         {"item.uuid": qna_uuid}
+#     ]
+# )   
+#         else:
+#             await update_one(
+#     PromptQuestionsModel,
+#     {"_id": ObjectId(prompt_questions_id)},
+#     {
+#         "$push": {
+#             "qna": {
+#                 "question": question,
+#                 "answer": result,
+#                 "category_id": ObjectId(category_id),
+#                 "uuid": str(uuid.uuid4())
+#             }
+#         }
+#     }
+# )
 
 
 
-        return result
+#         return result
 
 
 async def discover_competitors_chatgpt(brand_name: str, niche: str, nation: str, state: str) -> list:
